@@ -56,13 +56,46 @@ today; `iXsystems/truenas-ui-components` deliberately treats the ticket prefix
 as optional (see its `pr-title.yml`), and `truenas-connect/ui` has no PR-title
 check at all. Adopt it only where the team has agreed to require tickets.
 
+### `claude-review.yml`
+
+Automatic Claude PR review, gated on the PR author having write access.
+
+```yaml
+jobs:
+  claude-review:
+    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@v1
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    secrets:
+      anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+```
+
+| Input | Default | Notes |
+|---|---|---|
+| `model` | `claude-opus-5` | |
+| `prompt-file` | `.claude/review-prompt.md` | Repo-relative; the file stays in the consumer repo |
+| `require-write-access` | `true` | Keep on for public repos |
+| `skip-label` | `skip-claude` | |
+| `timeout-minutes` | `20` | |
+| `fetch-depth` | `10` | |
+
+The API key is an explicit named secret rather than `secrets: inherit`, because
+consumers name it differently (`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`).
+
+The `anthropics/claude-code-action` version is **hardcoded**, not an input:
+`uses:` does not evaluate expressions, and making it configurable is what let
+the consumers drift to v1.0.7 / v1.0.134 / v1.0.182 in the first place.
+
 ## Adoption status
 
-| Repo | `check-ticket.yml` |
-|---|---|
-| `truenas/webui` | migrating (first adopter) |
-| `iXsystems/truenas-ui-components` | n/a — tickets optional there |
-| `truenas-connect/ui` | n/a — no PR-title check |
+| Repo | `check-ticket.yml` | `claude-review.yml` |
+|---|---|---|
+| `truenas/webui` | migrating (first adopter) | not yet |
+| `iXsystems/truenas-ui-components` | n/a — tickets optional there | migrating |
+| `truenas-connect/ui` | n/a — no PR-title check | not yet |
 
 ## Releasing
 
