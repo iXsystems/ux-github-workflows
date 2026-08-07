@@ -136,13 +136,51 @@ resolves against the *caller's* repo, so `./.github/workflows/check-member.yml`
 would be looked for in webui. This nests two levels deep (caller →
 `claude-review` → `check-member`), well inside GitHub's limit of four.
 
+## Actions
+
+### `.github/actions/prepare`
+
+A **composite action**, not a reusable workflow: it runs as a step inside an
+existing job, so the caller keeps its own `runs-on`, `permissions` and checkout.
+Reusable workflows cannot do that — they bring their own job.
+
+```yaml
+steps:
+  - uses: actions/checkout@v4          # required first; this installs into the workspace
+  - uses: iXsystems/ux-github-workflows/.github/actions/prepare@master
+    with:
+      cache-jest: 'true'               # optional
+```
+
+| Input | Default | Notes |
+|---|---|---|
+| `node-version` | `24.13.1` | Pinned, not floating |
+| `cache-jest` | `'false'` | Caches `.jest/cache`; only useful where Jest runs |
+| `yarn-cache` | `'false'` | Caches Yarn's global cache folder |
+| `install` | `'true'` | Set `'false'` for the toolchain without `yarn install` |
+
+Inputs are strings — every composite-action input is. Compare with `== 'true'`.
+
+**Step order is load-bearing.** `actions/setup-node` runs *before*
+`corepack enable`, because Corepack writes its shims into the active Node
+installation's bin directory: enable it first and then let setup-node swap in a
+different Node, and `yarn` goes missing. That is also why setup-node's own
+`cache: 'yarn'` is not used — it shells out to `yarn` before Corepack has run,
+and would either fail or silently cache Yarn 1's directory for a Yarn 4 repo.
+The `yarn-cache` input resolves the folder with `yarn config get cacheFolder`
+after Corepack instead.
+
+This replaced identical local copies in `truenas/webui` and `truenas-connect/ui`
+and six inline repetitions in `iXsystems/truenas-ui-components`'s `ci-cd.yml`,
+which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
+
 ## Adoption status
 
-| Repo | `check-ticket.yml` | `check-member.yml` | `claude-review.yml` |
-|---|---|---|---|
-| `truenas/webui` | adopted | migrating (`main.yml`) | migrating |
-| `iXsystems/truenas-ui-components` | adopted | n/a — no self-hosted runner | migrating |
-| `truenas-connect/ui` | adopted | migrating (`main.yaml`) | migrating |
+| Repo | `check-ticket` | `check-member` | `claude-review` | `prepare` |
+|---|---|---|---|---|
+| `truenas/webui` | adopted | migrating (`main.yml`) | migrating | migrating |
+| `iXsystems/truenas-ui-components` | adopted | n/a — no self-hosted runner | migrating | migrating |
+| `truenas-connect/ui` | adopted | migrating (`main.yaml`) | migrating | migrating |
 
 `claude-review.yml` pulls in `check-member.yml` on its own, so a repo using only
 the review does not call it directly — the `check-member.yml` column tracks
