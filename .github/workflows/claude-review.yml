@@ -10,7 +10,7 @@ name: Claude Review (shared)
 # Usage:
 #   jobs:
 #     claude-review:
-#       uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@v1
+#       uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
 #       permissions:
 #         contents: read
 #         issues: write
@@ -46,6 +46,14 @@ on:
         description: 'Checkout depth. Needs to cover the PR range for the diff.'
         type: number
         default: 10
+      additional-permissions:
+        description: >-
+          Extra capabilities granted to the review, as understood by
+          claude-code-action, e.g. "gh pr list, gh pr view, gh api --method GET".
+          Empty by default: this widens what the reviewer can do, so a repo opts
+          in rather than inheriting it from the other consumers.
+        type: string
+        default: ''
     secrets:
       anthropic-api-key:
         description: 'Anthropic API key. Mapped by the caller, since the secret name differs per repo.'
@@ -127,13 +135,14 @@ jobs:
 
       # The action version is deliberately NOT an input: `uses:` does not
       # evaluate expressions, and making it configurable would recreate the
-      # drift this workflow exists to remove (the three repos were on v1.0.7,
-      # v1.0.134 and v1.0.182). Bump it here and re-tag to upgrade all callers.
+      # drift this workflow exists to remove (the three repos were on v1.0.182,
+      # v1.0.154 and v1.0.134). Bump it here to upgrade every caller at once.
       - name: Automatic PR Review
         uses: anthropics/claude-code-action@v1.0.182
         with:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           claude_args: "--model ${{ inputs.model }}"
+          additional_permissions: ${{ inputs.additional-permissions }}
           track_progress: true
           use_sticky_comment: true
           prompt: |

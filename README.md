@@ -36,7 +36,7 @@ on:
 
 jobs:
   check-ticket:
-    uses: iXsystems/ux-github-workflows/.github/workflows/check-ticket.yml@v1
+    uses: iXsystems/ux-github-workflows/.github/workflows/check-ticket.yml@master
     with:
       ticket-prefixes: TNC   # optional; defaults to NAS
 ```
@@ -51,10 +51,11 @@ uppercase key, so `nas-12345` fails with a message saying so.
 Callers own their `on:` trigger — a reusable workflow has no say in what
 triggers its caller.
 
-This one is **policy, not just plumbing.** Only `truenas/webui` requires tickets
-today; `iXsystems/truenas-ui-components` deliberately treats the ticket prefix
-as optional (see its `pr-title.yml`), and `truenas-connect/ui` has no PR-title
-check at all. Adopt it only where the team has agreed to require tickets.
+This one is **policy, not just plumbing** — it makes a ticket mandatory. All
+three consumers have since agreed to that, but a fourth repo should adopt it
+only once its team has. Note that `iXsystems/truenas-ui-components` requires a
+ticket *and* a Conventional Commits title; the latter stays in its own local
+`pr-title.yml`, since it is the only repo running semantic-release.
 
 ### `claude-review.yml`
 
@@ -63,7 +64,7 @@ Automatic Claude PR review, gated on the PR author having write access.
 ```yaml
 jobs:
   claude-review:
-    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@v1
+    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
     permissions:
       contents: read
       issues: write
@@ -81,33 +82,45 @@ jobs:
 | `skip-label` | `skip-claude` | |
 | `timeout-minutes` | `20` | |
 | `fetch-depth` | `10` | |
+| `additional-permissions` | `''` | Extra reviewer capabilities, e.g. `gh pr list, gh pr view, gh api --method GET`. Opt-in per repo |
 
 The API key is an explicit named secret rather than `secrets: inherit`, because
 consumers name it differently (`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`).
 
 The `anthropics/claude-code-action` version is **hardcoded**, not an input:
 `uses:` does not evaluate expressions, and making it configurable is what let
-the consumers drift to v1.0.7 / v1.0.134 / v1.0.182 in the first place.
+the consumers drift to v1.0.182 / v1.0.154 / v1.0.134 in the first place.
+
+The member gate is inlined here rather than kept as its own reusable workflow.
+A relative `uses:` inside a reusable workflow resolves against the *caller's*
+repo, not this one, so splitting it would mean every consumer either hosting a
+copy of the gate or this file hard-coding its own `iXsystems/…@ref` — one file
+is simpler than either.
 
 ## Adoption status
 
 | Repo | `check-ticket.yml` | `claude-review.yml` |
 |---|---|---|
-| `truenas/webui` | migrating (first adopter) | not yet |
-| `iXsystems/truenas-ui-components` | n/a — tickets optional there | migrating |
-| `truenas-connect/ui` | n/a — no PR-title check | not yet |
+| `truenas/webui` | adopted | migrating |
+| `iXsystems/truenas-ui-components` | adopted | migrating |
+| `truenas-connect/ui` | migrating | migrating |
 
 ## Releasing
 
-Callers pin `@v1`, so a change reaches them only when the tag moves:
+Callers reference `@master`, so **anything landing on `master` is live in every
+consumer immediately** — there is no per-repo review gate between a change here
+and three repos' CI running it.
 
-```bash
-git tag -f v1 && git push -f origin v1
-```
+That puts the whole burden on the PR into this repo:
 
-Land the change on `master`, verify it against the first adopter's next PR, then
-move the tag. For a breaking input change, cut `v2` and migrate callers one at a
-time instead.
+- Treat a change to a job `name:` as breaking. Consumers match
+  `"<caller job id> / <this name>"` in branch protection, so a rename silently
+  stops a required check reporting, with no PR in their repo to explain it.
+- Same for removing or renaming an input, or tightening a default.
+- Verify against one consumer's next real PR before assuming it is fine
+  everywhere; the consumers differ in trigger, secret names and permissions.
 
-Tags are the release surface here, not branches — a caller pinned to `@master`
-would pick up unreviewed changes on every push to every consumer at once.
+If that becomes too sharp an edge, the alternative is tagging: cut `v1`, move
+callers to `@v1`, and release with `git tag -f v1 && git push -f origin v1`.
+That was the original intent, but with only three consumers and one team it was
+judged more ceremony than it buys.
