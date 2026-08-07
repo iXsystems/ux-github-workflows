@@ -57,6 +57,45 @@ only once its team has. Note that `iXsystems/truenas-ui-components` requires a
 ticket *and* a Conventional Commits title; the latter stays in its own local
 `pr-title.yml`, since it is the only repo running semantic-release.
 
+### `check-member.yml`
+
+Reports whether the PR author has write access to the calling repo, as an
+`is_member` output. Two distinct uses, which is why it is its own file:
+
+```yaml
+jobs:
+  check-member:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@master
+
+  test-ux-team:
+    needs: [check-member]
+    if: needs.check-member.outputs.is_member == 'true'
+    runs-on: self-hosted
+    # ...
+```
+
+| Output | Notes |
+|---|---|
+| `is_member` | `'true'` / `'false'` — a string, not a boolean. Compare with `== 'true'` |
+
+`claude-review.yml` calls it to gate spend; `main.yml` in `truenas/webui` and
+`truenas-connect/ui` calls it to route tests to the self-hosted runner. Those
+were three separate copies of the same script before this existed — two
+workflow files plus one inlined directly in `truenas-connect/ui`'s `main.yaml`.
+
+Only meaningful on `pull_request` events: it reads
+`context.payload.pull_request`. A caller whose workflow also runs on `push`
+must guard the job with `if: github.event_name == 'pull_request'`, and then use
+`always()` plus an explicit `!= 'true'` on the downstream job so the skip does
+not cascade — see `truenas/webui`'s `main.yml`.
+
+If the permission lookup fails it falls back to `author_association`, which is
+deliberately permissive. It decides where tests run and whether a review
+happens; it must not be load-bearing for anything that gates a merge.
+
 ### `claude-review.yml`
 
 Automatic Claude PR review, gated on the PR author having write access.
@@ -91,19 +130,23 @@ The `anthropics/claude-code-action` version is **hardcoded**, not an input:
 `uses:` does not evaluate expressions, and making it configurable is what let
 the consumers drift to v1.0.182 / v1.0.154 / v1.0.134 in the first place.
 
-The member gate is inlined here rather than kept as its own reusable workflow.
-A relative `uses:` inside a reusable workflow resolves against the *caller's*
-repo, not this one, so splitting it would mean every consumer either hosting a
-copy of the gate or this file hard-coding its own `iXsystems/…@ref` — one file
-is simpler than either.
+The member gate is `check-member.yml`, called by full `iXsystems/…@master` path.
+It has to be the full path: inside a reusable workflow a relative `uses:`
+resolves against the *caller's* repo, so `./.github/workflows/check-member.yml`
+would be looked for in webui. This nests two levels deep (caller →
+`claude-review` → `check-member`), well inside GitHub's limit of four.
 
 ## Adoption status
 
-| Repo | `check-ticket.yml` | `claude-review.yml` |
-|---|---|---|
-| `truenas/webui` | adopted | migrating |
-| `iXsystems/truenas-ui-components` | adopted | migrating |
-| `truenas-connect/ui` | migrating | migrating |
+| Repo | `check-ticket.yml` | `check-member.yml` | `claude-review.yml` |
+|---|---|---|---|
+| `truenas/webui` | adopted | migrating (`main.yml`) | migrating |
+| `iXsystems/truenas-ui-components` | adopted | n/a — no self-hosted runner | migrating |
+| `truenas-connect/ui` | adopted | migrating (`main.yaml`) | migrating |
+
+`claude-review.yml` pulls in `check-member.yml` on its own, so a repo using only
+the review does not call it directly — the `check-member.yml` column tracks
+`main.yml`-style direct callers.
 
 ## Releasing
 
