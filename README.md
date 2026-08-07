@@ -87,10 +87,12 @@ were three separate copies of the same script before this existed — two
 workflow files plus one inlined directly in `truenas-connect/ui`'s `main.yaml`.
 
 Only meaningful on `pull_request` events: it reads
-`context.payload.pull_request`. A caller whose workflow also runs on `push`
-must guard the job with `if: github.event_name == 'pull_request'`, and then use
-`always()` plus an explicit `!= 'true'` on the downstream job so the skip does
-not cascade — see `truenas/webui`'s `main.yml`.
+`context.payload.pull_request`, and reports `'false'` on any event that has no
+PR payload rather than failing. Guarding the job with
+`if: github.event_name == 'pull_request'` is still worth doing to skip a
+pointless runner — but then the downstream job needs `always()` (or
+`!cancelled()`) plus an explicit `!= 'true'`, so the skip does not cascade into
+it. See `truenas/webui`'s `main.yml` for the worked example.
 
 If the permission lookup fails it falls back to `author_association`, which is
 deliberately permissive. It decides where tests run and whether a review
@@ -157,7 +159,6 @@ steps:
 | `node-version` | `24.13.1` | Pinned, not floating |
 | `cache-jest` | `'false'` | Caches `.jest/cache`; only useful where Jest runs |
 | `yarn-cache` | `'false'` | Caches Yarn's global cache folder |
-| `install` | `'true'` | Set `'false'` for the toolchain without `yarn install` |
 
 Inputs are strings — every composite-action input is. Compare with `== 'true'`.
 

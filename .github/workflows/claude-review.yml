@@ -59,6 +59,13 @@ on:
         description: 'Anthropic API key. Mapped by the caller, since the secret name differs per repo.'
         required: true
 
+# One review per PR. Rapid pushes previously started overlapping reviews that
+# raced to overwrite the same sticky comment, and paid for every superseded run.
+# Groups are scoped to the calling repository, so the PR number alone is enough.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   # Gate: does the PR author have write access to the calling repo?
   #
@@ -80,11 +87,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     needs: [check-member]
-    # `always()` is required because check-member is skipped when the gate is
-    # off; without it this job would inherit the skip. The membership condition
-    # then only has to hold when the gate actually ran.
+    # `!cancelled()` rather than a bare `always()`: the job still has to run when
+    # check-member is *skipped* (gate off) instead of inheriting that skip, but
+    # `always()` would also push a review through after the run was cancelled —
+    # spending tokens on work someone explicitly stopped. A failed check-member
+    # leaves is_member empty, so the gate stays fail-closed either way.
     if: |
-      always() &&
+      !cancelled() &&
       (inputs.require-write-access == false || needs.check-member.outputs.is_member == 'true') &&
       !contains(github.event.pull_request.labels.*.name, inputs.skip-label)
     permissions:

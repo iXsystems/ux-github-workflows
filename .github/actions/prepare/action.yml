@@ -32,10 +32,6 @@ inputs:
     description: "Cache Yarn's global cache folder, keyed on yarn.lock."
     required: false
     default: 'false'
-  install:
-    description: "Run `yarn install --immutable`. Set false to set up the toolchain without installing."
-    required: false
-    default: 'true'
 
 runs:
   using: 'composite'
@@ -58,7 +54,15 @@ runs:
       if: inputs.yarn-cache == 'true'
       id: yarn-cache-dir
       shell: bash
-      run: echo "dir=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
+      run: |
+        dir="$(yarn config get cacheFolder)"
+        # An empty value would reach actions/cache as `path: ''` and fail there
+        # with a Path Validation Error that says nothing about Yarn. Fail here.
+        if [ -z "$dir" ]; then
+          echo "::error::Could not resolve the Yarn cache folder. Is this a Yarn 4 project with a packageManager field?"
+          exit 1
+        fi
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
     - name: Cache Yarn packages
       if: inputs.yarn-cache == 'true'

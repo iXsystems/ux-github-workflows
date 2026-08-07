@@ -52,8 +52,19 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
+            // Guard first. Both the happy path and the fallback below read
+            // `pull_request`, so on any other event the fallback used to throw
+            // a second TypeError *inside* the catch — uncaught, failing the job
+            // rather than answering 'false'. Returning here keeps the job green
+            // and the `is_member` output defined for downstream `needs`.
+            const pullRequest = context.payload.pull_request;
+            if (!pullRequest) {
+              core.info(`No pull_request payload on a '${context.eventName}' event — reporting not-a-member.`);
+              return 'false';
+            }
+
             try {
-              const username = context.payload.pull_request.user.login;
+              const username = pullRequest.user.login;
               console.log(`Checking repository access for user: ${username}`);
 
               const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
@@ -75,7 +86,7 @@ jobs:
               // lookup fails (e.g. the token cannot read org membership).
               // Deliberately permissive: this decides where tests run and
               // whether a review happens, not whether anything merges.
-              const association = context.payload.pull_request.author_association;
+              const association = pullRequest.author_association;
               console.log(`PR author association: ${association}`);
 
               const isTeamMember = ['MEMBER', 'OWNER', 'COLLABORATOR'].includes(association);
