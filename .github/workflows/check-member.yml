@@ -1,0 +1,94 @@
+name: Check Member Access (shared)
+
+# Reports whether the PR author has write access to the calling repo, as an
+# `is_member` output. Used to route work: main.yml in truenas/webui and
+# truenas-connect/ui sends team PRs to the self-hosted test runner and everyone
+# else to ubuntu-latest.
+#
+# Usage:
+#   jobs:
+#     check-member:
+#       if: github.event_name == 'pull_request'
+#       permissions:
+#         contents: read
+#       uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@master
+#
+#     something:
+#       needs: [check-member]
+#       if: needs.check-member.outputs.is_member == 'true'
+#
+# Only meaningful on `pull_request` events — it reads
+# `context.payload.pull_request`. Callers that also run on push must guard the
+# job with `if: github.event_name == 'pull_request'`, and then use `always()`
+# plus an explicit `!= 'true'` on the downstream job so the skip does not
+# cascade. See truenas/webui's main.yml for the worked example.
+
+on:
+  workflow_call:
+    outputs:
+      is_member:
+        description: "'true' if the PR author has write or admin access to the calling repo."
+        value: ${{ jobs.check.outputs.is_member }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # API. A reusable call reports as "<caller job id> / <this name>", so consumers
+    # match this string in branch protection. Renaming it stops their required check
+    # reporting, silently, with no PR in their repo to explain it.
+    name: Check member access
+    runs-on: ubuntu-latest
+    outputs:
+      is_member: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Check membership
+        id: check
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          result-encoding: string
+          script: |
+            // Guard first. Both the happy path and the fallback below read
+            // `pull_request`, so on any other event the fallback used to throw
+            // a second TypeError *inside* the catch — uncaught, failing the job
+            // rather than answering 'false'. Returning here keeps the job green
+            // and the `is_member` output defined for downstream `needs`.
+            const pullRequest = context.payload.pull_request;
+            if (!pullRequest) {
+              core.info(`No pull_request payload on a '${context.eventName}' event — reporting not-a-member.`);
+              return 'false';
+            }
+
+            try {
+              const username = pullRequest.user.login;
+              console.log(`Checking repository access for user: ${username}`);
+
+              const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: username
+              });
+
+              console.log(`User ${username} has permission: ${permissionLevel.permission}`);
+
+              const hasWriteAccess = ['write', 'admin'].includes(permissionLevel.permission);
+              console.log(`Has write access: ${hasWriteAccess}`);
+
+              return hasWriteAccess ? 'true' : 'false';
+            } catch (error) {
+              console.log(`Error checking permissions: ${error.message}`);
+
+              // Fall back to the PR author association when the permission
+              // lookup fails (e.g. the token cannot read org membership).
+              // Deliberately permissive: this decides where tests run and
+              // whether a review happens, not whether anything merges.
+              const association = pullRequest.author_association;
+              console.log(`PR author association: ${association}`);
+
+              const isTeamMember = ['MEMBER', 'OWNER', 'COLLABORATOR'].includes(association);
+              console.log(`Is team member based on association: ${isTeamMember}`);
+
+              return isTeamMember ? 'true' : 'false';
+            }
