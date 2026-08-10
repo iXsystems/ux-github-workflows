@@ -14,7 +14,7 @@ name: Check Ticket (shared)
 #
 #   jobs:
 #     check-ticket:
-#       uses: iXsystems/ux-github-workflows/.github/workflows/check-ticket.yml@v1
+#       uses: iXsystems/ux-github-workflows/.github/workflows/check-ticket.yml@master
 #       with:
 #         ticket-prefixes: TNC        # optional; defaults to NAS
 
@@ -37,6 +37,9 @@ concurrency:
 
 jobs:
   check-ticket:
+    # API. A reusable call reports as "<caller job id> / <this name>", so consumers
+    # match this string in branch protection. Renaming it stops their required check
+    # reporting, silently, with no PR in their repo to explain it.
     name: Check PR references a ticket
     runs-on: ubuntu-latest
     steps:
