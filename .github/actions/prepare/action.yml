@@ -82,7 +82,13 @@ runs:
         restore-keys: |
           ${{ runner.os }}-jest-
 
+    # Unconditional, and deliberately so. This step once had an `if:` guard on an
+    # optional install toggle; the toggle was removed and the guard was left
+    # behind. A composite action resolves an undeclared input to the empty
+    # string rather than failing, so the condition quietly became false and every
+    # caller got a green "Install" step that installed nothing — the jobs that
+    # then tried to use node_modules were the ones that failed.
+    # Never add an `if:` here without declaring the input it reads.
     - name: Install packages
-      if: inputs.install == 'true'
       shell: bash
       run: yarn install --immutable
