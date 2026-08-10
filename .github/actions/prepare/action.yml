@@ -1,0 +1,94 @@
+name: 'Prepare: Node and Yarn'
+description: 'Sets up Node, enables Corepack for Yarn 4, restores caches and installs dependencies.'
+
+# Composite action, not a reusable workflow: this runs as a *step* inside an
+# existing job, so the caller keeps its own runs-on, permissions and checkout.
+#
+# The caller must `actions/checkout` first — this installs into whatever is
+# already in the workspace.
+#
+# Usage:
+#   steps:
+#     - uses: actions/checkout@v4
+#     - uses: iXsystems/ux-github-workflows/.github/actions/prepare@master
+#       with:
+#         cache-jest: 'true'      # optional
+#
+# Inputs are strings, as all composite-action inputs are — compare with
+# `== 'true'`, not as booleans.
+
+inputs:
+  node-version:
+    description: >-
+      Exact Node version. Pinned rather than floating on purpose: the library
+      and the apps that consume it should build on the same Node.
+    required: false
+    default: '24.13.1'
+  cache-jest:
+    description: "Cache .jest/cache, keyed on yarn.lock. Only useful in repos that run Jest."
+    required: false
+    default: 'false'
+  yarn-cache:
+    description: "Cache Yarn's global cache folder, keyed on yarn.lock."
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    # Order matters: setup-node must come before `corepack enable`. Corepack
+    # writes its shims into the active Node installation's bin directory, so
+    # enabling it first and then letting setup-node swap in a different Node
+    # leaves `yarn` missing. This is also why setup-node's own `cache: 'yarn'`
+    # is not used — it shells out to `yarn` before Corepack has run.
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Enable Corepack for Yarn 4
+      shell: bash
+      run: corepack enable
+
+    - name: Resolve Yarn cache folder
+      if: inputs.yarn-cache == 'true'
+      id: yarn-cache-dir
+      shell: bash
+      run: |
+        dir="$(yarn config get cacheFolder)"
+        # An empty value would reach actions/cache as `path: ''` and fail there
+        # with a Path Validation Error that says nothing about Yarn. Fail here.
+        if [ -z "$dir" ]; then
+          echo "::error::Could not resolve the Yarn cache folder. Is this a Yarn 4 project with a packageManager field?"
+          exit 1
+        fi
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Yarn packages
+      if: inputs.yarn-cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.yarn-cache-dir.outputs.dir }}
+        key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-yarn-
+
+    - name: Cache Jest cache
+      if: inputs.cache-jest == 'true'
+      uses: actions/cache@v4
+      with:
+        path: .jest/cache
+        key: ${{ runner.os }}-jest-${{ hashFiles('**/yarn.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-jest-
+
+    # Unconditional, and deliberately so. This step once had an `if:` guard on an
+    # optional install toggle; the toggle was removed and the guard was left
+    # behind. A composite action resolves an undeclared input to the empty
+    # string rather than failing, so the condition quietly became false and every
+    # caller got a green "Install" step that installed nothing — the jobs that
+    # then tried to use node_modules were the ones that failed.
+    # Never add an `if:` here without declaring the input it reads.
+    - name: Install packages
+      shell: bash
+      run: yarn install --immutable
