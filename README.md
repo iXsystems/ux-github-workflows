@@ -52,10 +52,56 @@ Callers own their `on:` trigger — a reusable workflow has no say in what
 triggers its caller.
 
 This one is **policy, not just plumbing** — it makes a ticket mandatory. All
-three consumers have since agreed to that, but a fourth repo should adopt it
-only once its team has. Note that `iXsystems/truenas-ui-components` requires a
-ticket *and* a Conventional Commits title; the latter stays in its own local
-`pr-title.yml`, since it is the only repo running semantic-release.
+four consumers have agreed to that, but a fifth repo should adopt it only once
+its team has. `truenas/api-client-ts` adopted it with `ticket-prefixes: TNC`
+knowing what it costs: only 9 of its previous 30 merged PRs carried a ticket,
+so this is a change in how that repo works, not a formalisation of what it
+already did.
+
+Two repos require a ticket *and* a Conventional Commits title. That second
+check is `pr-title.yml`, below — it is a separate concern (semantic-release
+reads the title) and a separate workflow.
+
+### `pr-title.yml`
+
+Requires a Conventional Commits PR title, optionally prefixed with
+`<anything> / ` segments — `NAS-141240 / 27.0.0-BETA.1 / feat(x): y` and plain
+`fix: y` both pass. No inputs.
+
+```yaml
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+jobs:
+  pr-title:
+    permissions:
+      pull-requests: read
+    uses: iXsystems/ux-github-workflows/.github/workflows/pr-title.yml@master
+```
+
+This is only worth running where a squash merge feeds the PR title to
+semantic-release as the commit subject — `iXsystems/truenas-ui-components` and
+`truenas/api-client-ts` today. It is a *release* gate wearing a style gate's
+clothes.
+
+**The caller's `.releaserc.json` has to agree with the pattern**, or a title
+this accepts parses over there as a different type and the merge publishes
+nothing. That failure is a release that did not happen, which nobody notices.
+Keep `parserOpts.headerPattern` equal to:
+
+```
+^(?:[^:]+ / )?(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\(([^)]+)\))?!?: (.+)$
+```
+
+and `breakingHeaderPattern` to the same with `!:` for `!?:`.
+
+The optional prefix is `[^:]+`, not `.+`, and that is the substantive
+difference between the two copies this replaced. A greedy `.+ / ` swallows the
+real type: in `fix: adjust a / b: c` it matches `fix: adjust a / ` and leaves
+`b`. `truenas-ui-components` had the greedy one in both its gate and its
+`.releaserc.json`; adopting this converged it on the strict pattern. Checked
+against the last 40 merged titles in both repos, nothing changes but that case.
 
 ### `check-member.yml`
 
@@ -228,21 +274,21 @@ which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
 
 ## Adoption status
 
-| Repo | `check-ticket` | `check-member` | `prepare` | review |
-|---|---|---|---|---|
-| `truenas/webui` | adopted | migrating (`main.yml`) | migrating | own `claude.yml` |
-| `iXsystems/truenas-ui-components` | adopted | n/a — no self-hosted runner | migrating | own `claude.yml` |
-| `truenas-connect/ui` | adopted | migrating (`main.yaml`) | migrating | own `claude.yml` |
-| `truenas/api-client-ts` | n/a | n/a — has its own `check-team.yml` | n/a | own `claude.yml`, the source of the gated variant |
+| Repo | `check-ticket` | `pr-title` | `check-member` | `prepare` | review |
+|---|---|---|---|---|---|
+| `truenas/webui` | adopted | n/a — no semantic-release | migrating (`main.yml`) | migrating | own `claude.yml` |
+| `iXsystems/truenas-ui-components` | adopted | migrating | n/a — no self-hosted runner | migrating | own `claude.yml` |
+| `truenas-connect/ui` | adopted | n/a — no semantic-release | migrating (`main.yaml`) | migrating | own `claude.yml` |
+| `truenas/api-client-ts` | migrating | migrating | via `claude-review-gated` | migrating | migrating to `claude-review-gated` |
 
-No repo calls the shared review workflows yet — they are published here first so
-that migrating a consumer is a small PR in that consumer, reviewable on its own.
-Each repo's local `claude.yml` keeps working until it is replaced.
+`api-client-ts` is the first consumer of the gated review, and the repo it came
+from. `webui`, `truenas-ui-components` and `truenas-connect/ui` still run their
+own `claude.yml`; migrating each is a small PR in that repo, reviewable on its
+own, rather than something this repo can do to them.
 
-Two of those local files are already duplicates of something here:
-`api-client-ts`'s `check-team.yml` is byte-identical to `check-member.yml` apart
-from `name:`, and `truenas-ui-components`'s `check-member.yml` is the same file
-again. Whichever review workflow a repo adopts, that copy goes with it.
+`truenas-ui-components`'s local `check-member.yml` is still a byte-identical
+copy of the one here. It goes when that repo adopts either review workflow —
+the shared review calls the shared gate, so the copy has nothing left to do.
 
 ## Releasing
 
