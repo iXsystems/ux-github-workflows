@@ -4,11 +4,12 @@ name: Claude Review (shared, gated)
 # on anything at MEDIUM or above. Ported from truenas/api-client-ts, where it
 # was built and is in use.
 #
-# This is the only review workflow published here. An earlier comment-only
-# variant was published alongside it briefly, so a repo could keep the review
-# it knew while trying this one; that was dropped on review — two workflows
-# doing one job is a choice every consumer then has to make and keep making,
-# and reverting is what git history is for.
+# This is the only review workflow published here. A comment-only variant was
+# written to go alongside it, so a repo could keep the review it knew while
+# trying this one, and was dropped before it ever reached master — two
+# workflows doing one job is a choice every consumer then has to make and keep
+# making, and reverting is what git history is for. That is where the `-gated`
+# in the file name comes from; it stays because it describes what this does.
 #
 # What it does:
 #   - structured output against `review/schema.json`, scored by

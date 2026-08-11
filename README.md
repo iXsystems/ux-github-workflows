@@ -159,11 +159,13 @@ Automatic PR review, and the only one published here. It replaces the inline
 | Mode | tag mode (`track_progress`) | agent mode |
 | Action version | drifted to three different pins | one, bumped here for everyone |
 
-An earlier comment-only variant of this workflow was published alongside it for
-a short time, so a repo could keep the review it knew while trying this one. It
-was dropped on review: two workflows doing one job is a choice every consumer
-has to make and then keep making, and reverting is what git history is for. If
-this one turns out to be wrong, change it here and every caller moves together.
+A comment-only variant was written to go alongside this one, so a repo could
+keep the review it knew while trying this one, and was dropped before it ever
+reached `master`: two workflows doing one job is a choice every consumer has to
+make and then keep making, and reverting is what git history is for. If this
+one turns out to be wrong, change it here and every caller moves together.
+That is also where the `-gated` in the file name comes from — it distinguished
+the two. It stays because it describes what the workflow does.
 
 The call shape:
 
@@ -316,8 +318,10 @@ reason in that section above: the PR that installs the reviewer is the one PR
 it will not run on. Nothing is required in branch protection in these repos
 today, so it does not block the merge.
 
-`truenas-ui-components`'s local `check-member.yml` is still a byte-identical
-copy of the one here. It goes when that repo's migration lands — the shared
+`truenas-ui-components` has a local `check-member.yml`, which is where the one
+here came from. It has since drifted: the copy there is the version from before
+the missing-`pull_request`-payload guard, so it still throws on a non-PR event
+rather than answering `false`. Its migration (#175) deletes it — the shared
 review calls the shared gate, so the copy has nothing left to do.
 
 ## Releasing
