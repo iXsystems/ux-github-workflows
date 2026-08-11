@@ -1,0 +1,135 @@
+name: Claude Review (shared)
+
+# Shared automatic-PR-review workflow. This is the original one — a single
+# sticky comment, no structured output, nothing that fails a build.
+# `claude-review-gated.yml` is the newer variant that also scores the review
+# and fails the job; see the README for which to pick. Both are published so a
+# repo can trial the new one without giving this up, but a repo should run one
+# or the other on a given PR, not both: they write to the same comment.
+#
+# Callers own their `on:` trigger — branch filters and paths-ignore differ per
+# repo and cannot be passed as inputs, since `workflow_call` has no say in what
+# triggers the caller. Everything else lives here.
+#
+# Usage:
+#   jobs:
+#     claude-review:
+#       uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
+#       permissions:
+#         contents: read
+#         issues: write
+#         pull-requests: write
+#         id-token: write
+#       secrets:
+#         anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: 'Model passed via claude_args.'
+        type: string
+        default: 'claude-opus-5'
+      prompt-file:
+        description: 'Repo-relative path to the review guidelines appended to the prompt.'
+        type: string
+        default: '.claude/review-prompt.md'
+      require-write-access:
+        description: 'Gate the review on the PR author having write/admin access. Keep true on public repos — it is what stops drive-by PRs from spending tokens.'
+        type: boolean
+        default: true
+      skip-label:
+        description: 'PR label that suppresses the review.'
+        type: string
+        default: 'skip-claude'
+      timeout-minutes:
+        description: 'Hard cap on the review job.'
+        type: number
+        default: 20
+      fetch-depth:
+        description: 'Checkout depth. Needs to cover the PR range for the diff.'
+        type: number
+        default: 10
+      additional-permissions:
+        description: >-
+          Extra capabilities granted to the review, as understood by
+          claude-code-action, e.g. "gh pr list, gh pr view, gh api --method GET".
+          Empty by default: this widens what the reviewer can do, so a repo opts
+          in rather than inheriting it from the other consumers.
+        type: string
+        default: ''
+    secrets:
+      anthropic-api-key:
+        description: 'Anthropic API key. Mapped by the caller, since the secret name differs per repo.'
+        required: true
+
+# One review per PR. Rapid pushes previously started overlapping reviews that
+# raced to overwrite the same sticky comment, and paid for every superseded run.
+# Groups are scoped to the calling repository, so the PR number alone is enough.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Gate: does the PR author have write access to the calling repo?
+  #
+  # Referenced by its full `iXsystems/...@ref` path, not a relative one: inside a
+  # reusable workflow a relative `uses:` resolves against the *caller's* repo, so
+  # `./.github/workflows/check-member.yml` would look for the file in webui.
+  #
+  # It is a separate file rather than inlined here because main.yml in webui and
+  # truenas-connect/ui needs the same answer to pick a test runner — inlining
+  # would put a second copy of the script in the repo that exists to remove them.
+  check-member:
+    if: inputs.require-write-access
+    permissions:
+      contents: read
+    uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@master
+
+  review:
+    name: Automatic PR review
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    needs: [check-member]
+    # `!cancelled()` rather than a bare `always()`: the job still has to run when
+    # check-member is *skipped* (gate off) instead of inheriting that skip, but
+    # `always()` would also push a review through after the run was cancelled —
+    # spending tokens on work someone explicitly stopped. A failed check-member
+    # leaves is_member empty, so the gate stays fail-closed either way.
+    if: |
+      !cancelled() &&
+      (inputs.require-write-access == false || needs.check-member.outputs.is_member == 'true') &&
+      !contains(github.event.pull_request.labels.*.name, inputs.skip-label)
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      # The action version is deliberately NOT an input: `uses:` does not
+      # evaluate expressions, and making it configurable would recreate the
+      # drift this workflow exists to remove (the three repos were on v1.0.182,
+      # v1.0.154 and v1.0.134). Bump it here to upgrade every caller at once.
+      # Kept equal to the pin in claude-review-gated.yml, so "which version of
+      # the action are we on" has one answer for the whole repo.
+      - name: Automatic PR Review
+        uses: anthropics/claude-code-action@v1.0.187
+        with:
+          anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          claude_args: "--model ${{ inputs.model }}"
+          additional_permissions: ${{ inputs.additional-permissions }}
+          track_progress: true
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Please review this pull request using the guidelines below.
+            It should be already checked out in the current directory.
+
+            {{file:${{ inputs.prompt-file }}}}

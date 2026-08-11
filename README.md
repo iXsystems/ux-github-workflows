@@ -98,6 +98,97 @@ If the permission lookup fails it falls back to `author_association`, which is
 deliberately permissive. It decides where tests run; it must not be
 load-bearing for anything that gates a merge.
 
+### `claude-review.yml` and `claude-review-gated.yml`
+
+Automatic PR review, in two variants. **Pick one per repo.** They are published
+side by side so the newer one can be trialled without giving up the one people
+already know, not so that both run on the same PR — see the warning below.
+
+| | `claude-review.yml` | `claude-review-gated.yml` |
+|---|---|---|
+| Output | one sticky comment | inline comments + one edited-in-place summary |
+| Result | advisory; the job passes either way | fails at MEDIUM and above |
+| Severities | whatever the prompt asks for | fixed enum, enforced by a JSON schema |
+| Knows what it said last round | no | yes — prior threads and their resolved state |
+| Marks its own comment stale | no | yes, while a new review is in flight |
+| Mode | tag mode (`track_progress`) | agent mode |
+
+Both take the same call shape:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude-review:
+    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review-gated.yml@master
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    secrets:
+      anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+```
+
+| Input | Default | Notes |
+|---|---|---|
+| `model` | `claude-opus-5` | Passed through `claude_args` |
+| `prompt-file` | `.claude/review-prompt.md` | The repo's own guidelines |
+| `require-write-access` | `true` | Calls `check-member.yml`. Keep it on — it is what stops a drive-by PR spending tokens |
+| `skip-label` | `skip-claude` | |
+| `timeout-minutes` | `20` | |
+| `fetch-depth` | `10` | Must cover the PR range |
+| `tooling-ref` | `master` | `claude-review-gated.yml` only; see below |
+
+The secret is named, not inherited, because the repos call it different things
+(`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`). The `anthropics/claude-code-action`
+version is hardcoded rather than an input: `uses:` does not evaluate
+expressions, and a configurable version is how the consumers ended up on
+v1.0.182, v1.0.154 and v1.0.134 in the first place. Both files pin the same
+version; bump there and every caller moves.
+
+**Do not run both on one PR.** Both post as `github-actions[bot]`, and the
+gated one's `gh pr comment --edit-last` edits the last comment *that bot*
+wrote — which, with the other workflow also running, may be its sticky comment.
+Their `concurrency` groups are distinct, so nothing cancels anything; the
+collision is over the comment, not the runner.
+
+#### What the gated variant adds, and what it needs from the repo
+
+The review's structured output is scored by `review/check-review-threshold.mjs`
+against `review/schema.json`: **MEDIUM, HIGH and BLOCKER fail the job**, LOW does
+not, and a review that produced no parseable output fails too — a reviewer that
+crashed must not read as a reviewer that found nothing. Findings are emitted as
+workflow annotations, so they land on the diff in the Files tab.
+
+Whether a failed job blocks a merge is branch protection, set per repo. That is
+the reversible half of the decision, and adopting this workflow does not make it
+for you. There is deliberately no override label: bypassing a red check is
+something branch protection already gates on permission and records against a
+person. (`skip-label` is the exception, and it skips the whole review rather
+than a finding — restrict who can apply it.)
+
+The severity rubric that assigns those levels is `review/rubric.md`, here rather
+than in each repo, because the gate and the schema are here: three copies of the
+rubric would drift from the thing scoring them. The workflow appends it to the
+caller's `prompt-file`, so a repo's own file should say what to look for in
+*its* code and leave grading alone. A repo migrating a prompt that already
+carries a rubric — `truenas/api-client-ts` does — should delete that half.
+
+`tooling-ref` exists because the schema, rubric and scripts have to be checked
+out into the caller's workspace at run time, and a reusable workflow cannot see
+which ref it was itself called at. (`github.job_workflow_sha` is exactly that,
+but actionlint 1.7.7 does not know the property and fails the file, and this
+repo's CI runs actionlint.) It defaults to `master`, which matches every current
+caller. A caller pinning this workflow to a tag must pin `tooling-ref` to the
+same tag, or it gets `master`'s tooling against a pinned workflow.
+
+Everything the run generates, and the tooling checkout itself, goes in
+`.claude-review/` in the workspace, added to `.git/info/exclude` so it stays out
+of `git status` and out of the review.
+
 ## Actions
 
 ### `.github/actions/prepare`
@@ -137,15 +228,21 @@ which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
 
 ## Adoption status
 
-| Repo | `check-ticket` | `check-member` | `prepare` |
-|---|---|---|---|
-| `truenas/webui` | adopted | migrating (`main.yml`) | migrating |
-| `iXsystems/truenas-ui-components` | adopted | n/a — no self-hosted runner | migrating |
-| `truenas-connect/ui` | adopted | migrating (`main.yaml`) | migrating |
+| Repo | `check-ticket` | `check-member` | `prepare` | review |
+|---|---|---|---|---|
+| `truenas/webui` | adopted | migrating (`main.yml`) | migrating | own `claude.yml` |
+| `iXsystems/truenas-ui-components` | adopted | n/a — no self-hosted runner | migrating | own `claude.yml` |
+| `truenas-connect/ui` | adopted | migrating (`main.yaml`) | migrating | own `claude.yml` |
+| `truenas/api-client-ts` | n/a | n/a — has its own `check-team.yml` | n/a | own `claude.yml`, the source of the gated variant |
 
-**Automatic PR review is deliberately not here yet.** Each repo keeps its own
-`claude.yml` while that work is in flight; revisit sharing it once those changes
-have settled.
+No repo calls the shared review workflows yet — they are published here first so
+that migrating a consumer is a small PR in that consumer, reviewable on its own.
+Each repo's local `claude.yml` keeps working until it is replaced.
+
+Two of those local files are already duplicates of something here:
+`api-client-ts`'s `check-team.yml` is byte-identical to `check-member.yml` apart
+from `name:`, and `truenas-ui-components`'s `check-member.yml` is the same file
+again. Whichever review workflow a repo adopts, that copy goes with it.
 
 ## Releasing
 
@@ -161,6 +258,9 @@ That puts the whole burden on the PR into this repo:
 - Same for removing or renaming an input, or tightening a default.
 - Verify against one consumer's next real PR before assuming it is fine
   everywhere; the consumers differ in trigger, secret names and permissions.
+- `review/` ships the same way. It is checked out at `tooling-ref`, which
+  defaults to `master`, so an edit to the rubric changes how every gated
+  review grades on its next run — including whether a finding fails a build.
 
 If that becomes too sharp an edge, the alternative is tagging: cut `v1`, move
 callers to `@v1`, and release with `git tag -f v1 && git push -f origin v1`.
