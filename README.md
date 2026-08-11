@@ -214,15 +214,29 @@ not, and a review that produced no parseable output fails too — a reviewer tha
 crashed must not read as a reviewer that found nothing. Findings are emitted as
 workflow annotations, so they land on the diff in the Files tab.
 
-**The PR that adopts this workflow will fail this check, once.**
-`claude-code-action` refuses to run when the pull request changes the workflow
-file that invokes it — that is what stops a PR from editing its own reviewer —
-so it skips, emits no structured output, and the gate fails closed. The review
-step "succeeds" in a few seconds without reviewing; the log says `Skipping
-action due to workflow validation`. Re-running does not help, and the branch a
-caller is pinned to has nothing to do with it: the calling workflow has to be on
-the caller's default branch before the review can run. Expect one red check on
-the migration PR, and a working review on the next one.
+**Why this passes `github_token` explicitly.** Left unset, the action exchanges
+its OIDC token for an Anthropic GitHub App token, and that exchange refuses when
+the calling workflow differs from the version on the default branch:
+
+```
+Workflow validation failed. The workflow file must exist and have identical
+content to the version on the repository's default branch.
+```
+
+It is a reasonable guard on Anthropic's own credentials — a PR should not mint
+an app token for a workflow nobody has merged — but it applies to the *token
+exchange*, not to reviewing. The effect was that the PR adopting this workflow
+could never be reviewed by it: the action skipped, the step went green in about
+four seconds, and the gate below fails closed on empty output, so every
+migration PR in every repo showed a red `Automatic PR review`.
+
+Passing `github_token: ${{ github.token }}` makes `setupGitHubToken` return
+early, so the exchange never happens. GitHub has already scoped that token to
+the job's `permissions:` block, which is where the equivalent restriction
+belongs. The costs: comments come from `github-actions[bot]` rather than the
+Claude app, and on a `pull_request` from a fork `GITHUB_TOKEN` is read-only, so
+posting would fail — `require-write-access` skips those anyway, leaving only a
+write-access author working from a fork as the real gap.
 
 Whether a failed job blocks a merge is branch protection, set per repo. That is
 the reversible half of the decision, and adopting this workflow does not make it
@@ -309,10 +323,9 @@ replacing its own `claude.yml` with a call to this one — a small PR in that
 repo, reviewable on its own, rather than something this repo can do to them.
 `webui` has not been started.
 
-Every one of those PRs will show a red `Automatic PR review`, once, for the
-reason in that section above: the PR that installs the reviewer is the one PR
-it will not run on. Nothing is required in branch protection in these repos
-today, so it does not block the merge.
+Those PRs are reviewed by the workflow they install, which is only true because
+this one passes `github_token` — see above. Nothing is required in branch
+protection in these repos today, so a finding does not block a merge either.
 
 `truenas-ui-components` has a local `check-member.yml`, which is where the one
 here came from. It has since drifted: the copy there is the version from before

@@ -211,6 +211,28 @@ jobs:
         uses: anthropics/claude-code-action@v1.0.187
         with:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          # Passed so the action uses this token directly instead of exchanging
+          # its OIDC token for an Anthropic GitHub App token. `setupGitHubToken`
+          # returns early on it, and the exchange is the *only* thing that runs
+          # the workflow-file validation:
+          #
+          #   Workflow validation failed. The workflow file must exist and have
+          #   identical content to the version on the repository's default branch.
+          #
+          # That validation is what stops a PR from minting an app token for a
+          # workflow nobody has merged yet — a sensible guard on Anthropic's own
+          # credentials, and irrelevant to a token GitHub already scoped to this
+          # job's `permissions:` block. Without this line, the PR that adopts
+          # this workflow cannot be reviewed by it: the action skips, emits no
+          # structured output, and the gate below fails closed on every
+          # migration PR in every repo.
+          #
+          # Two consequences. Comments come from github-actions[bot] rather than
+          # the Claude app, which is what `mark-review-stale.mjs` already edits
+          # with. And on a pull_request from a fork GITHUB_TOKEN is read-only,
+          # so posting would fail there — `require-write-access` already skips
+          # those, but a write-access author working from a fork is the gap.
+          github_token: ${{ github.token }}
           # No track_progress: it forces tag mode, which overrides allowedTools
           # with a fixed list that cannot emit structured output, so
           # --json-schema hangs. Agent mode passes tools through but posts

@@ -33,11 +33,12 @@ if (!raw) {
     '  Skipping action due to workflow validation: The workflow file must exist and\n' +
     '  have identical content to the version on the repository\'s default branch.\n' +
     '\n' +
-    'claude-code-action refuses to run when the pull request changes the workflow ' +
-    'file that invokes it, which is what stops a PR from editing its own reviewer. ' +
-    'A PR that adds or migrates this workflow therefore cannot review itself, and ' +
-    'no amount of re-running changes that — the calling workflow has to be on the ' +
-    'default branch first. Expected once, on the PR that adopts the review.\n' +
+    'That is the OIDC-to-app-token exchange refusing, not the review failing, and ' +
+    'the workflow avoids it by passing `github_token` to the action. Seeing it ' +
+    'means that input went missing, or a caller is pinned to a ref from before it ' +
+    'was added — check the `Automatic PR Review` step for `Using provided ' +
+    'GITHUB_TOKEN for authentication`, which is the line that says the exchange ' +
+    'was skipped.\n' +
     '\n' +
     'Otherwise the run genuinely failed or was cut short: an expired or missing API ' +
     'key, the job timeout, or a cancelled run.'
