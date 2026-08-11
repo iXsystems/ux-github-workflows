@@ -2,10 +2,15 @@ name: Claude Review (shared, gated)
 
 # Automatic PR review that produces a machine-readable result and fails the job
 # on anything at MEDIUM or above. Ported from truenas/api-client-ts, where it
-# was built and is in use; `claude-review.yml` is the older comment-only
-# variant and stays published alongside this one.
+# was built and is in use.
 #
-# What this adds over `claude-review.yml`:
+# This is the only review workflow published here. An earlier comment-only
+# variant was published alongside it briefly, so a repo could keep the review
+# it knew while trying this one; that was dropped on review — two workflows
+# doing one job is a choice every consumer then has to make and keep making,
+# and reverting is what git history is for.
+#
+# What it does:
 #   - structured output against `review/schema.json`, scored by
 #     `review/check-review-threshold.mjs`, so the review is a check and not
 #     only a comment;
@@ -19,9 +24,9 @@ name: Claude Review (shared, gated)
 #   - a "superseded" banner on the previous summary while this run is in
 #     flight, so a stale "nothing blocking" cannot be read as current.
 #
-# Do not run this and `claude-review.yml` on the same PR. Both post as
-# github-actions[bot], and this one's `gh pr comment --edit-last` would edit
-# whichever summary that bot wrote last — including the other workflow's.
+# A repo must not also run its own inline Claude review on the same PR. Both
+# post as github-actions[bot], and this one's `gh pr comment --edit-last` would
+# edit whichever summary that bot wrote last — including the other one's.
 #
 # Callers own their `on:` trigger — branch filters and paths-ignore differ per
 # repo and cannot be passed as inputs, since `workflow_call` has no say in what
@@ -93,8 +98,9 @@ on:
 # raced to overwrite the same sticky comment, and paid for every superseded run.
 # Groups are scoped to the calling repository, so the PR number alone is enough.
 #
-# The suffix keeps this distinct from claude-review.yml's group: a repo trialling
-# both would otherwise have each new run cancel the other workflow's.
+# The group name is namespaced to this workflow so it cannot collide with a
+# group a caller declares around its own call, or with one an inline review
+# still in place during a migration is using.
 concurrency:
   group: claude-review-gated-${{ github.event.pull_request.number }}
   cancel-in-progress: true

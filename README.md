@@ -144,13 +144,12 @@ If the permission lookup fails it falls back to `author_association`, which is
 deliberately permissive. It decides where tests run; it must not be
 load-bearing for anything that gates a merge.
 
-### `claude-review.yml` and `claude-review-gated.yml`
+### `claude-review-gated.yml`
 
-Automatic PR review, in two variants. **Pick one per repo.** They are published
-side by side so the newer one can be trialled without giving up the one people
-already know, not so that both run on the same PR — see the warning below.
+Automatic PR review, and the only one published here. It replaces the inline
+`claude.yml` each consumer grew its own copy of:
 
-| | `claude-review.yml` | `claude-review-gated.yml` |
+| | inline `claude.yml` (what consumers had) | `claude-review-gated.yml` |
 |---|---|---|
 | Output | one sticky comment | inline comments + one edited-in-place summary |
 | Result | advisory; the job passes either way | fails at MEDIUM and above |
@@ -158,8 +157,15 @@ already know, not so that both run on the same PR — see the warning below.
 | Knows what it said last round | no | yes — prior threads and their resolved state |
 | Marks its own comment stale | no | yes, while a new review is in flight |
 | Mode | tag mode (`track_progress`) | agent mode |
+| Action version | drifted to three different pins | one, bumped here for everyone |
 
-Both take the same call shape:
+An earlier comment-only variant of this workflow was published alongside it for
+a short time, so a repo could keep the review it knew while trying this one. It
+was dropped on review: two workflows doing one job is a choice every consumer
+has to make and then keep making, and reverting is what git history is for. If
+this one turns out to be wrong, change it here and every caller moves together.
+
+The call shape:
 
 ```yaml
 on:
@@ -186,22 +192,23 @@ jobs:
 | `skip-label` | `skip-claude` | |
 | `timeout-minutes` | `20` | |
 | `fetch-depth` | `10` | Must cover the PR range |
-| `tooling-ref` | `master` | `claude-review-gated.yml` only; see below |
+| `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
 The secret is named, not inherited, because the repos call it different things
 (`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`). The `anthropics/claude-code-action`
 version is hardcoded rather than an input: `uses:` does not evaluate
 expressions, and a configurable version is how the consumers ended up on
-v1.0.182, v1.0.154 and v1.0.134 in the first place. Both files pin the same
-version; bump there and every caller moves.
+v1.0.182, v1.0.154 and v1.0.134 in the first place. Bump it here and every
+caller moves.
 
-**Do not run both on one PR.** Both post as `github-actions[bot]`, and the
-gated one's `gh pr comment --edit-last` edits the last comment *that bot*
-wrote — which, with the other workflow also running, may be its sticky comment.
-Their `concurrency` groups are distinct, so nothing cancels anything; the
-collision is over the comment, not the runner.
+**A repo must not keep its own inline review running alongside this.** Both
+post as `github-actions[bot]`, and this one's `gh pr comment --edit-last` edits
+the last comment *that bot* wrote — which, with an inline review also running,
+may be its sticky comment. The `concurrency` groups are distinct, so nothing
+cancels anything; the collision is over the comment, not the runner. Migrating
+means replacing `claude.yml`'s contents, not adding a second workflow file.
 
-#### What the gated variant adds, and what it needs from the repo
+#### What this needs from the repo
 
 The review's structured output is scored by `review/check-review-threshold.mjs`
 against `review/schema.json`: **MEDIUM, HIGH and BLOCKER fail the job**, LOW does
@@ -287,9 +294,9 @@ which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
 | Repo | `check-ticket` | `pr-title` | `check-member` | `prepare` | review |
 |---|---|---|---|---|---|
 | `truenas/webui` | adopted | n/a — no semantic-release | migrating (`main.yml`) | migrating | own `claude.yml` |
-| `iXsystems/truenas-ui-components` | adopted | migrating | n/a — no self-hosted runner | migrating | own `claude.yml` |
-| `truenas-connect/ui` | adopted | n/a — no semantic-release | migrating (`main.yaml`) | migrating | own `claude.yml` |
-| `truenas/api-client-ts` | migrating | migrating | via `claude-review-gated` | migrating | migrating to `claude-review-gated` |
+| `iXsystems/truenas-ui-components` | adopted | migrating | n/a — no self-hosted runner | migrating | migrating (#175) |
+| `truenas-connect/ui` | adopted | n/a — no semantic-release | migrating (`main.yaml`) | migrating | migrating (#370) |
+| `truenas/api-client-ts` | migrating | migrating | via the review | migrating | migrating (#33) |
 | `iXsystems/ux-github-workflows` (this repo) | adopted (`pr-ticket.yml`) | n/a — no semantic-release | self-test in `ci.yml` | n/a | n/a |
 
 This repo calls two of its own workflows, by relative path rather than
@@ -299,14 +306,19 @@ and `ci.yml`'s `self-test` job runs `check-member.yml`. `pr-ticket.yml` is a
 separate file from `ci.yml` because the ticket check needs the `edited` trigger
 and the rest of CI does not want it.
 
-`api-client-ts` is the first consumer of the gated review, and the repo it came
-from. `webui`, `truenas-ui-components` and `truenas-connect/ui` still run their
-own `claude.yml`; migrating each is a small PR in that repo, reviewable on its
-own, rather than something this repo can do to them.
+`api-client-ts` is the repo the review came from. Each consumer migrates by
+replacing its own `claude.yml` with a call to this one — a small PR in that
+repo, reviewable on its own, rather than something this repo can do to them.
+`webui` has not been started.
+
+Every one of those PRs will show a red `Automatic PR review`, once, for the
+reason in that section above: the PR that installs the reviewer is the one PR
+it will not run on. Nothing is required in branch protection in these repos
+today, so it does not block the merge.
 
 `truenas-ui-components`'s local `check-member.yml` is still a byte-identical
-copy of the one here. It goes when that repo adopts either review workflow —
-the shared review calls the shared gate, so the copy has nothing left to do.
+copy of the one here. It goes when that repo's migration lands — the shared
+review calls the shared gate, so the copy has nothing left to do.
 
 ## Releasing
 
