@@ -84,7 +84,20 @@ try {
     comments.push(...batch);
     if (batch.length < 100) break;
   }
-  const summary = [...comments].reverse().find((c) => MARKER.test(c.body ?? ''));
+  // Author-filtered, because the marker is not proof of authorship: it lives in
+  // the body, and anyone quoting the summary — to reply to it, or to argue with
+  // it — carries the marker into their own comment. Without this the newest such
+  // quote wins, and the step then PATCHes a person's comment to prepend a banner
+  // they did not write, while the actual stale summary goes on reading as
+  // current. The token has `issues: write` over the whole repo, so that edit
+  // succeeds.
+  //
+  // `type === 'Bot'` rather than a login: the summary's author moves with
+  // whatever identity the action posts under, which has already been both
+  // github-actions[bot] and the Claude app.
+  const summary = [...comments]
+    .reverse()
+    .find((c) => c.user?.type === 'Bot' && MARKER.test(c.body ?? ''));
 
   if (!summary) {
     console.log('No previous review summary to mark; nothing to do.');
@@ -95,7 +108,11 @@ try {
     // pushes old — a staleness notice that is itself stale.
     const stripped = stripBanner(summary.body);
 
-    const reviewed = MARKER.exec(stripped)[1];
+    // Re-matched against the stripped body, so it can miss where the test on the
+    // raw body passed. Say which comment, rather than throwing a bare TypeError
+    // into the catch below and reporting it as the reason nothing was marked.
+    const reviewed = MARKER.exec(stripped)?.[1];
+    if (!reviewed) throw new Error(`no reviewed-sha marker left in comment ${summary.id}`);
 
     if (head.startsWith(reviewed) || reviewed.startsWith(head.slice(0, 7))) {
       console.log(`Summary already describes ${head.slice(0, 7)}; not marking.`);
