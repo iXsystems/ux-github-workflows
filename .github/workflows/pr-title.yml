@@ -1,0 +1,75 @@
+name: PR Title (shared)
+
+# Requires a Conventional Commits pull request title, optionally prefixed with
+# "<anything> / " segments — e.g. "NAS-141240 / 27.0.0-BETA.1 / feat(x): y" or
+# plain "fix: y".
+#
+# This matters only where a squash merge feeds the PR title to
+# semantic-release as the commit subject, which is currently
+# iXsystems/truenas-ui-components and truenas/api-client-ts. Both had their own
+# copy; they had already drifted apart in the one place it counts (see below).
+#
+# **The caller's `.releaserc.json` has to agree with this pattern.** A title
+# this gate accepts must parse, over there, to the type this gate thinks it
+# saw. If it does not, the PR merges green and publishes nothing — the failure
+# is a release that did not happen, which nobody is watching for. Callers must
+# keep `parserOpts.headerPattern` and `breakingHeaderPattern` equal to:
+#
+#   ^(?:[^:]+ / )?(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\(([^)]+)\))?!?: (.+)$
+#
+# and the breaking one with `!:` in place of `!?:`.
+#
+# Usage:
+#   on:
+#     pull_request_target:
+#       types: [opened, edited, synchronize]
+#
+#   jobs:
+#     pr-title:
+#       permissions:
+#         pull-requests: read
+#       uses: iXsystems/ux-github-workflows/.github/workflows/pr-title.yml@master
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # API. A reusable call reports as "<caller job id> / <this name>", so consumers
+    # match this string in branch protection. Renaming it stops their required check
+    # reporting, silently, with no PR in their repo to explain it.
+    name: Validate Conventional Commit Title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title
+        env:
+          # Passed via env, not interpolated into the script — a PR title is
+          # attacker-controlled text, and `${{ }}` in a `run:` block splices it
+          # into the shell source.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # The optional prefix is `[^:]+` rather than `.+` on purpose. A greedy
+          # `.+ / ` swallows the real type: in "fix: adjust a / b: c" it matches
+          # "fix: adjust a / " and leaves "b" as the type, so the gate passes a
+          # title that semantic-release then reads as a type with no release
+          # rule. Excluding colons from the prefix means the prefix cannot eat
+          # a `type:` that came before it.
+          #
+          # bash uses POSIX ERE, which has no (?:...) — the only difference from
+          # the .releaserc.json pattern is that these groups capture.
+          pattern='^([^:]+ / )?(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+$'
+          if [[ "$PR_TITLE" =~ $pattern ]]; then
+            echo "PR title OK: $PR_TITLE"
+          else
+            echo "::error::PR title must follow Conventional Commits, optionally prefixed with '<ticket> / <version> / '."
+            echo "::error::Examples: 'fix(auth): handle expired token' or 'NAS-141240 / 27.0.0-BETA.1 / feat(form-field): add tooltip'."
+            echo "::error::Got: $PR_TITLE"
+            exit 1
+          fi

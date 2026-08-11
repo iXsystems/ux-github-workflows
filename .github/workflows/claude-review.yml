@@ -1,0 +1,329 @@
+name: Claude Review (shared)
+
+# Automatic PR review that produces a machine-readable result and fails the job
+# on anything at MEDIUM or above. Ported from truenas/api-client-ts, where it
+# was built and is in use.
+#
+# There is deliberately one review workflow here, not a choice of two. If this
+# turns out to be the wrong one, change it here and every caller moves together;
+# reverting is what git history is for.
+#
+# What it does:
+#   - structured output against `review/schema.json`, scored by
+#     `review/check-review-threshold.mjs`, so the review is a check and not
+#     only a comment;
+#   - the severity rubric the gate scores, in `review/rubric.md`, appended to
+#     the caller's own prompt file;
+#   - inline comments on the lines they are about, plus one edited-in-place
+#     summary comment;
+#   - the PR's existing review threads, and their resolved state, handed to the
+#     reviewer so a re-run neither repeats a finding someone already declined
+#     nor opens a second thread for one still open;
+#   - a "superseded" banner on the previous summary while this run is in
+#     flight, so a stale "nothing blocking" cannot be read as current.
+#
+# A repo must not also run its own inline Claude review on the same PR. Both
+# post as github-actions[bot], and this one's `gh pr comment --edit-last` would
+# edit whichever summary that bot wrote last — including the other one's.
+#
+# Callers own their `on:` trigger — branch filters and paths-ignore differ per
+# repo and cannot be passed as inputs, since `workflow_call` has no say in what
+# triggers the caller. Everything else lives here.
+#
+# Usage:
+#   jobs:
+#     claude-review:
+#       uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
+#       permissions:
+#         contents: read
+#         issues: write
+#         pull-requests: write
+#         id-token: write
+#       secrets:
+#         anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+#
+# The job fails on a blocking finding. Whether that stops a merge is branch
+# protection's decision, made per repo, and reversible without touching this.
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: 'Model passed via claude_args.'
+        type: string
+        default: 'claude-opus-5'
+      prompt-file:
+        description: >-
+          Repo-relative path to the caller's own review guidelines — what to
+          look for in this codebase. The shared severity rubric is appended
+          after it; do not copy the rubric in here as well.
+        type: string
+        default: '.claude/review-prompt.md'
+      require-write-access:
+        description: 'Gate the review on the PR author having write/admin access. Keep true on public repos — it is what stops drive-by PRs from spending tokens.'
+        type: boolean
+        default: true
+      skip-label:
+        description: >-
+          PR label that suppresses the review. Note that skipping means the
+          gate does not run either, so this is a way to bypass a red check
+          without branch protection recording it — restrict who can apply it.
+        type: string
+        default: 'skip-claude'
+      timeout-minutes:
+        description: 'Hard cap on the review job.'
+        type: number
+        default: 20
+      fetch-depth:
+        description: 'Checkout depth. Needs to cover the PR range for the diff.'
+        type: number
+        default: 10
+      tooling-ref:
+        description: >-
+          Ref of this repository to take the schema, rubric and scripts from.
+          It cannot be derived from the ref the workflow itself was called at
+          (`github.job_workflow_sha` exists for that, but actionlint 1.7.7 does
+          not know the property and rejects the file), so a caller pinning this
+          workflow to a tag must pin the tooling to the same tag here.
+        type: string
+        default: 'master'
+    secrets:
+      anthropic-api-key:
+        description: 'Anthropic API key. Mapped by the caller, since the secret name differs per repo.'
+        required: true
+
+# One review per PR. Rapid pushes previously started overlapping reviews that
+# raced to overwrite the same sticky comment, and paid for every superseded run.
+# Groups are scoped to the calling repository, so the PR number alone is enough.
+#
+# The group name is namespaced to this workflow so it cannot collide with a
+# group a caller declares around its own call, or with one an inline review
+# still in place during a migration is using.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Gate: does the PR author have write access to the calling repo?
+  #
+  # Referenced by its full `iXsystems/...@ref` path, not a relative one: inside a
+  # reusable workflow a relative `uses:` resolves against the *caller's* repo, so
+  # `./.github/workflows/check-member.yml` would look for the file in webui.
+  check-member:
+    if: inputs.require-write-access
+    permissions:
+      contents: read
+    uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@master
+
+  review:
+    name: Automatic PR review
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    needs: [check-member]
+    # `!cancelled()` rather than a bare `always()`: the job still has to run when
+    # check-member is *skipped* (gate off) instead of inheriting that skip, but
+    # `always()` would also push a review through after the run was cancelled —
+    # spending tokens on work someone explicitly stopped.
+    #
+    # A *failed* check-member is admitted here and rejected by the first step
+    # below, rather than being left to fall out as an unmet condition. It would
+    # skip this job — and a skipped job satisfies a required status check, so
+    # the review a caller made mandatory would report green having never run.
+    # Skipping is fail-closed for the thing check-member guards (no review, no
+    # tokens spent on a stranger's PR) and fail-open for the merge gate, which
+    # is the reading that matters to anyone who marked this check required.
+    # Starting a runner to exit 1 costs seconds and no API tokens.
+    #
+    # check-member has to fail as a *job* to reach this: a permission lookup
+    # that errors is caught in the script and answers 'false', so this is
+    # runner or action infrastructure, not GitHub declining to answer.
+    #
+    # skip-label keeps the skips-as-green property, deliberately — see the
+    # input's description.
+    if: |
+      !cancelled() &&
+      (inputs.require-write-access == false ||
+       needs.check-member.outputs.is_member == 'true' ||
+       needs.check-member.result == 'failure') &&
+      !contains(github.event.pull_request.labels.*.name, inputs.skip-label)
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      # First, and before anything is checked out: this is the whole reason the
+      # job was allowed to start on a failed gate. Failing here puts the failure
+      # on the check a caller made required, where skipping it would not have.
+      - name: Check the access gate ran
+        if: needs.check-member.result == 'failure'
+        run: |
+          echo "::error::the write-access gate failed, so nobody reviewed this PR."
+          echo "check-member answers 'false' on a permission lookup it cannot make, so a"
+          echo "failure there is the job itself — a runner or action problem. Re-run it."
+          echo "This check fails rather than skipping: a skipped job counts as a passing"
+          echo "required status check, which would report an unreviewed PR as reviewed."
+          exit 1
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      # Fail here rather than let the run proceed: a review with no guidelines
+      # still costs a full run, and reads as a review that had them.
+      - name: Check the prompt file exists
+        env:
+          PROMPT_FILE: ${{ inputs.prompt-file }}
+        run: |
+          if [ ! -f "$PROMPT_FILE" ]; then
+            echo "::error::prompt-file '$PROMPT_FILE' does not exist in ${GITHUB_REPOSITORY}."
+            echo "Create it, or pass a different path as the prompt-file input."
+            exit 1
+          fi
+
+      # Everything this workflow adds to the workspace goes under one directory,
+      # excluded from git. The reviewer reads the tree it is reviewing; tooling
+      # showing up in `git status` is noise at best, and something it might
+      # comment on at worst.
+      #
+      # The path has to be inside the workspace rather than in the runner temp
+      # dir, for two reasons: actions/checkout rejects a `path` outside it, and
+      # `{{file:...}}` in the prompt is not expanded by the action — nothing in
+      # claude-code-action touches it — so the reviewer opens those paths itself,
+      # from the workspace root.
+      - name: Reserve the tooling directory
+        run: |
+          mkdir -p .claude-review
+          echo "/.claude-review/" >> .git/info/exclude
+
+      - name: Check out the review tooling
+        uses: actions/checkout@v4
+        with:
+          repository: iXsystems/ux-github-workflows
+          ref: ${{ inputs.tooling-ref }}
+          path: .claude-review/tooling
+          sparse-checkout: review
+
+      # --json-schema takes the schema itself, not a path to it. Keeping the
+      # schema in its own file and compacting it here means there is still one
+      # source of truth, and it stays lintable and reviewable as JSON.
+      - name: Compact the review schema
+        id: schema
+        run: echo "json=$(jq -c . .claude-review/tooling/review/schema.json)" >> "$GITHUB_OUTPUT"
+
+      # Resolution state is GraphQL-only, so this runs with the job's token and
+      # hands the reviewer a file. It gains no new tool permissions.
+      - name: Collect prior review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OUT_FILE: .claude-review/prior-review-threads.md
+        run: node .claude-review/tooling/review/collect-review-threads.mjs
+
+      # The sticky comment still shows the previous round's findings until this
+      # one finishes. Say so on it, rather than letting it read as current.
+      - name: Mark the previous review stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OUT_FILE: .claude-review/review-marker.md
+        run: node .claude-review/tooling/review/mark-review-stale.mjs
+
+      # The action version is deliberately NOT an input: `uses:` does not
+      # evaluate expressions, and making it configurable is how the consumers
+      # drifted onto three different versions in the first place. Bump it here
+      # to upgrade every caller at once.
+      - name: Automatic PR Review
+        id: review
+        uses: anthropics/claude-code-action@v1.0.187
+        with:
+          anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          # Passed so the action uses this token directly instead of exchanging
+          # its OIDC token for an Anthropic GitHub App token. `setupGitHubToken`
+          # returns early on it, and the exchange is the *only* thing that runs
+          # the workflow-file validation:
+          #
+          #   Workflow validation failed. The workflow file must exist and have
+          #   identical content to the version on the repository's default branch.
+          #
+          # That validation is what stops a PR from minting an app token for a
+          # workflow nobody has merged yet — a sensible guard on Anthropic's own
+          # credentials, and irrelevant to a token GitHub already scoped to this
+          # job's `permissions:` block. Without this line, the PR that adopts
+          # this workflow cannot be reviewed by it: the action skips, emits no
+          # structured output, and the gate below fails closed on every
+          # migration PR in every repo.
+          #
+          # Two consequences. Comments come from github-actions[bot] rather than
+          # the Claude app, which is what `mark-review-stale.mjs` already edits
+          # with. And on a pull_request from a fork GITHUB_TOKEN is read-only,
+          # so posting would fail there — `require-write-access` already skips
+          # those, but a write-access author working from a fork is the gap.
+          github_token: ${{ github.token }}
+          # No track_progress: it forces tag mode, which overrides allowedTools
+          # with a fixed list that cannot emit structured output, so
+          # --json-schema hangs. Agent mode passes tools through but posts
+          # nothing itself, hence gh and the inline-comment tool below.
+          claude_args: |
+            --model ${{ inputs.model }}
+            --json-schema '${{ steps.schema.outputs.json }}'
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+          # No use_sticky_comment either — it only applies to tag mode.
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Please review this pull request using the guidelines below.
+            It should be already checked out in the current directory.
+
+            Put each finding that has a file and line on that line, as an
+            inline comment. Use one top-level comment for the summary and
+            anything not tied to a specific line, posted with:
+
+              gh pr comment <number> --edit-last --create-if-none --body-file -
+
+            `--edit-last` replaces your own previous summary instead of adding
+            another, and `--create-if-none` covers the first run. Without them
+            every re-run leaves its predecessor behind, and a reader arriving
+            at five summaries cannot tell which one describes the code in
+            front of them.
+
+            The threads already on this PR are listed below, with whether each
+            was resolved. A resolved thread is a decision someone made, not an
+            oversight — do not reopen it, and do not restate it in the prose
+            unless this push changed the code it points at. An unresolved one
+            you would repeat is a thread to reply in rather than a second
+            thread to open.
+
+            Neither case removes a finding from the structured output. While a
+            finding is still true it stays in that list at its own severity,
+            resolved or not: the gate scores that list and nothing else, so
+            suppressing one there is how an outstanding finding turns the check
+            green. Deduplicate threads and prose, never findings.
+
+            `.claude-review/` holds the files this run generated for you. It is
+            tooling, not part of the change under review — do not review it, and
+            do not comment on it.
+
+            {{file:.claude-review/prior-review-threads.md}}
+
+            {{file:.claude-review/review-marker.md}}
+
+            Neither comment substitutes for the structured output, which is
+            what the gate reads. The same findings appear in both, at the same
+            severity.
+
+            {{file:${{ inputs.prompt-file }}}}
+
+            {{file:.claude-review/tooling/review/rubric.md}}
+
+      - name: Enforce review threshold
+        # always(): a review step that fails must not skip the gate, or a broken
+        # reviewer reads as a clean bill of health.
+        if: always()
+        env:
+          FINDINGS: ${{ steps.review.outputs.structured_output }}
+        run: node .claude-review/tooling/review/check-review-threshold.mjs

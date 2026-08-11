@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Claude review findings",
+  "description": "Structured result of the automated PR review. Severity is an enum so a gate can key off it: without the schema the reviewer invents its own labels each run, which is fine for a comment and useless for a check.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "description": "Every finding, including LOW. An empty array is a valid and useful result.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "file", "summary"],
+        "properties": {
+          "severity": {
+            "enum": ["BLOCKER", "HIGH", "MEDIUM", "LOW"],
+            "description": "Assigned by the rubric in review/rubric.md. A finding that cannot name its failing input, or quote the claim it says is untrue, is LOW."
+          },
+          "file": {
+            "type": "string",
+            "description": "Repository-relative path the finding is about."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line the finding anchors to. Omit when it is about the file as a whole."
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "One line, no markdown. This is what appears as a CI annotation on the diff."
+          }
+        }
+      }
+    }
+  }
+}
