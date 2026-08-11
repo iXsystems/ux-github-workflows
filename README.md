@@ -280,6 +280,14 @@ which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
 | `iXsystems/truenas-ui-components` | adopted | migrating | n/a — no self-hosted runner | migrating | own `claude.yml` |
 | `truenas-connect/ui` | adopted | n/a — no semantic-release | migrating (`main.yaml`) | migrating | own `claude.yml` |
 | `truenas/api-client-ts` | migrating | migrating | via `claude-review-gated` | migrating | migrating to `claude-review-gated` |
+| `iXsystems/ux-github-workflows` (this repo) | adopted (`pr-ticket.yml`) | n/a — no semantic-release | self-test in `ci.yml` | n/a | n/a |
+
+This repo calls two of its own workflows, by relative path rather than
+`@master`, so a change to either is executed on the pull request that makes it
+instead of on a consumer's next one: `pr-ticket.yml` runs `check-ticket.yml`,
+and `ci.yml`'s `self-test` job runs `check-member.yml`. `pr-ticket.yml` is a
+separate file from `ci.yml` because the ticket check needs the `edited` trigger
+and the rest of CI does not want it.
 
 `api-client-ts` is the first consumer of the gated review, and the repo it came
 from. `webui`, `truenas-ui-components` and `truenas-connect/ui` still run their

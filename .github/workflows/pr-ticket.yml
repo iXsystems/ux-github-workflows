@@ -1,0 +1,47 @@
+name: PR ticket
+
+# This repository publishes `check-ticket.yml`; this is the file that runs it
+# here. Two things come out of that:
+#
+#   - Pull requests to this repo carry a ticket, the same as the consumers' do.
+#   - `check-ticket.yml` is executed before a change to it can merge. `uses: ./`
+#     resolves against this repository, so a PR that breaks the gate fails its
+#     own check rather than surfacing in three consumers' next PR. That is the
+#     same reasoning as ci.yml's `self-test` job, which calls check-member.yml
+#     the same way.
+#
+# Separate from ci.yml because of the trigger. This needs `edited`: retitling
+# the PR is how a red check here gets fixed, and without it the corrected title
+# never re-runs, leaving the check red with nothing to click. ci.yml must not
+# take `edited` in exchange — it would rebuild actionlint, input-refs,
+# review-assets and the self-test every time someone edits a description.
+#
+# `synchronize` is here so the check reports against each new head SHA. Branch
+# protection waits on a check that never ran for the commit it is looking at,
+# and a title validated two pushes ago has not been validated for this one.
+#
+# NOTE if this is ever made a required status check: a PR opened with the
+# default GITHUB_TOKEN fires no `pull_request` event, so this never runs and
+# never reports — that PR is then unmergeable with no way to unblock it from
+# the PR side. Automation opening PRs here must use a PAT or an app token.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+# No `concurrency` here: check-ticket.yml declares its own group, keyed on the
+# PR number, and a called workflow's concurrency applies. Adding a second group
+# at this level would only cancel the caller around it.
+
+jobs:
+  check-ticket:
+    # Local `./` on purpose — see above. Consumers call this same workflow as
+    # iXsystems/ux-github-workflows/.github/workflows/check-ticket.yml@master.
+    #
+    # `ticket-prefixes` is left at its default of NAS, which is what this repo
+    # files under. Pass `with: ticket-prefixes: NAS,TNC` if that stops being
+    # true.
+    uses: ./.github/workflows/check-ticket.yml
