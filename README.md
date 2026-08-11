@@ -144,12 +144,12 @@ If the permission lookup fails it falls back to `author_association`, which is
 deliberately permissive. It decides where tests run; it must not be
 load-bearing for anything that gates a merge.
 
-### `claude-review-gated.yml`
+### `claude-review.yml`
 
 Automatic PR review, and the only one published here. It replaces the inline
 `claude.yml` each consumer grew its own copy of:
 
-| | inline `claude.yml` (what consumers had) | `claude-review-gated.yml` |
+| | inline `claude.yml` (what consumers had) | `claude-review.yml` |
 |---|---|---|
 | Output | one sticky comment | inline comments + one edited-in-place summary |
 | Result | advisory; the job passes either way | fails at MEDIUM and above |
@@ -159,13 +159,9 @@ Automatic PR review, and the only one published here. It replaces the inline
 | Mode | tag mode (`track_progress`) | agent mode |
 | Action version | drifted to three different pins | one, bumped here for everyone |
 
-A comment-only variant was written to go alongside this one, so a repo could
-keep the review it knew while trying this one, and was dropped before it ever
-reached `master`: two workflows doing one job is a choice every consumer has to
-make and then keep making, and reverting is what git history is for. If this
-one turns out to be wrong, change it here and every caller moves together.
-That is also where the `-gated` in the file name comes from — it distinguished
-the two. It stays because it describes what the workflow does.
+There is deliberately one of these, not a choice of two. If it turns out to be
+wrong, change it here and every caller moves together; reverting is what git
+history is for, not a second workflow kept alive in case.
 
 The call shape:
 
@@ -176,7 +172,7 @@ on:
 
 jobs:
   claude-review:
-    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review-gated.yml@master
+    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
     permissions:
       contents: read
       issues: write

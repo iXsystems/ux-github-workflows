@@ -57,7 +57,7 @@ jobs:
         run: node scripts/check-input-refs.js
 
   # The review assets are published files that nothing in this repo executes:
-  # claude-review-gated.yml checks them out into the *caller's* workspace and
+  # claude-review.yml checks them out into the *caller's* workspace and
   # runs them there. So a syntax error, or a rename that leaves the workflow
   # pointing at a path that no longer exists, would first be seen by a consumer
   # — as a review job that dies partway, which is exactly the failure the gate
@@ -93,13 +93,13 @@ jobs:
           while read -r ref; do
             file="${ref#.claude-review/tooling/}"
             if [ ! -f "$file" ]; then
-              echo "::error::claude-review-gated.yml references $ref, but $file is not in this repo"
+              echo "::error::claude-review.yml references $ref, but $file is not in this repo"
               missing=1
             else
               echo "ok   $file"
             fi
           done < <(grep -oE '\.claude-review/tooling/[A-Za-z0-9_./-]+' \
-                     .github/workflows/claude-review-gated.yml | sort -u)
+                     .github/workflows/claude-review.yml | sort -u)
           exit "$missing"
 
   # Smoke test: this repo calls its own reusable workflow, so a change to

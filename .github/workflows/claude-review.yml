@@ -1,15 +1,12 @@
-name: Claude Review (shared, gated)
+name: Claude Review (shared)
 
 # Automatic PR review that produces a machine-readable result and fails the job
 # on anything at MEDIUM or above. Ported from truenas/api-client-ts, where it
 # was built and is in use.
 #
-# This is the only review workflow published here. A comment-only variant was
-# written to go alongside it, so a repo could keep the review it knew while
-# trying this one, and was dropped before it ever reached master — two
-# workflows doing one job is a choice every consumer then has to make and keep
-# making, and reverting is what git history is for. That is where the `-gated`
-# in the file name comes from; it stays because it describes what this does.
+# There is deliberately one review workflow here, not a choice of two. If this
+# turns out to be the wrong one, change it here and every caller moves together;
+# reverting is what git history is for.
 #
 # What it does:
 #   - structured output against `review/schema.json`, scored by
@@ -36,7 +33,7 @@ name: Claude Review (shared, gated)
 # Usage:
 #   jobs:
 #     claude-review:
-#       uses: iXsystems/ux-github-workflows/.github/workflows/claude-review-gated.yml@master
+#       uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
 #       permissions:
 #         contents: read
 #         issues: write
@@ -103,7 +100,7 @@ on:
 # group a caller declares around its own call, or with one an inline review
 # still in place during a migration is using.
 concurrency:
-  group: claude-review-gated-${{ github.event.pull_request.number }}
+  group: claude-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:

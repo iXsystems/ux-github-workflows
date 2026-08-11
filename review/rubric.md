@@ -1,6 +1,6 @@
 # Severity and reporting
 
-`claude-review-gated.yml` appends this file to the calling repository's own
+`claude-review.yml` appends this file to the calling repository's own
 review prompt, after it. That split is deliberate: the repo's file says what to
 look for in *its* code, and this one says how to grade and report whatever the
 review finds.
