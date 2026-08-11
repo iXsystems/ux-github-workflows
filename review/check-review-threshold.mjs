@@ -56,12 +56,39 @@ try {
   process.exit(1);
 }
 
+/**
+ * Workflow commands are line-oriented, and every field below is written by the
+ * model. A newline in a summary ends the annotation and hands what follows to
+ * the runner as a fresh line — so a finding whose text happens to contain
+ * `::error::`, or `::stop-commands::`, is a finding that writes the log rather
+ * than appearing in it. The mundane version of the same bug is more likely:
+ * a summary with a line break in it silently loses everything after it.
+ *
+ * `maxLength: 200` in the schema bounds how much text arrives, not which bytes,
+ * and nothing validates the payload against that schema before this script
+ * reads it anyway. These are GitHub's own escapes: `%` first, or it would
+ * re-escape the escapes.
+ */
+const escapeData = (value) =>
+  String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+
+/** Property values additionally end at `:` or `,`, which separate the properties. */
+const escapeProperty = (value) => escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
+
 const blocking = findings.filter((f) => BLOCKING.has(f.severity));
 
 for (const f of findings) {
   const level = BLOCKING.has(f.severity) ? 'error' : 'notice';
-  const where = [f.file && `file=${f.file}`, f.line && `line=${f.line}`].filter(Boolean).join(',');
-  console.log(`::${level} ${where}::${f.severity}: ${f.summary}`);
+  const where = [
+    f.file && `file=${escapeProperty(f.file)}`,
+    f.line && `line=${escapeProperty(f.line)}`,
+  ]
+    .filter(Boolean)
+    .join(',');
+  // Appended with its own space, rather than interpolated with one: `file` is
+  // required by the schema but not enforced here, and a finding without one
+  // would otherwise emit `::error ::…`, a command with a trailing space.
+  console.log(`::${level}${where && ` ${where}`}::${escapeData(`${f.severity}: ${f.summary}`)}`);
 }
 
 if (blocking.length === 0) {
