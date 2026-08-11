@@ -151,7 +151,7 @@ Automatic PR review, and the only one published here. It replaces the inline
 
 | | inline `claude.yml` (what consumers had) | `claude-review.yml` |
 |---|---|---|
-| Output | one sticky comment | inline comments + one edited-in-place summary |
+| Output | one sticky comment | inline comments from the reviewer + one edited-in-place summary posted by the gate |
 | Result | advisory; the job passes either way | fails at MEDIUM and above |
 | Severities | whatever the prompt asks for | fixed enum, enforced by a JSON schema |
 | Knows what it said last round | no | yes — prior threads and their resolved state |
@@ -213,6 +213,19 @@ against `review/schema.json`: **MEDIUM, HIGH and BLOCKER fail the job**, LOW doe
 not, and a review that produced no parseable output fails too — a reviewer that
 crashed must not read as a reviewer that found nothing. Findings are emitted as
 workflow annotations, so they land on the diff in the Files tab.
+
+**The gate posts the summary comment**, from that same list. It used to be the
+reviewer's job and the reviewer did not always do it — a run that found one LOW
+emitted its structured output, posted neither an inline comment nor a summary,
+and reported green, which on the PR is indistinguishable from a review that never
+ran. Everything else here is a mechanism rather than an instruction, and the one
+part left to the model's cooperation was the only part a human reads. So the
+summary is now a function of the findings: it always exists, it always agrees
+with the check, and `gh pr comment` is not in the reviewer's allowed tools.
+
+The reviewer still writes the inline comments — those need a line to anchor to
+and detail that does not fit on one line — and may say more there than the
+summary does.
 
 **Why this passes `github_token` explicitly.** Left unset, the action exchanges
 its OIDC token for an Anthropic GitHub App token, and that exchange refuses when

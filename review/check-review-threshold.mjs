@@ -6,6 +6,20 @@
  * emitted as workflow annotations so a failure lands on the diff in the Files
  * tab rather than only in the log.
  *
+ * It also posts the summary comment, from the same list it scores.
+ *
+ * That used to be the reviewer's job, and the reviewer did not always do it: a
+ * run that found one LOW emitted the structured output, posted neither an inline
+ * comment nor a summary, and reported green — leaving a PR that looks exactly
+ * like one nobody reviewed. Every other guarantee here is a mechanism rather
+ * than an instruction (the gate scores the list, not the prose; empty output
+ * fails; a stale summary gets a banner), and the one part left to the model's
+ * cooperation is the only part a human actually reads.
+ *
+ * So the summary is a function of the findings now. The reviewer still writes
+ * the inline comments, which need a line to anchor to and judgement about what
+ * to say; it no longer owns whether anything is said at all.
+ *
  * Whether this actually blocks a merge is a branch-protection setting, not a
  * property of this script: it fails the job either way, and marking the check
  * required is the separate, reversible decision that turns that into a gate.
@@ -17,7 +31,10 @@
  * — would go on suppressing findings from every later push.
  */
 
+import { api, listIssueComments, findSummaryComment, markerFor } from './github.mjs';
+
 const BLOCKING = new Set(['BLOCKER', 'HIGH', 'MEDIUM']);
+const ORDER = ['BLOCKER', 'HIGH', 'MEDIUM', 'LOW'];
 
 const raw = process.env.FINDINGS?.trim();
 
@@ -90,6 +107,77 @@ for (const f of findings) {
   // would otherwise emit `::error ::…`, a command with a trailing space.
   console.log(`::${level}${where && ` ${where}`}::${escapeData(`${f.severity}: ${f.summary}`)}`);
 }
+
+/**
+ * `line` is optional in the schema, and a finding about a file as a whole is a
+ * legitimate result rather than one missing a field.
+ */
+const where = (f) => (f.line ? `${f.file}:${f.line}` : f.file);
+
+const plural = (n) => (n === 1 ? '1 finding' : `${n} findings`);
+
+const buildSummary = (sha) => {
+  const head = blocking.length
+    ? `**${blocking.length} of ${plural(findings.length)} at or above MEDIUM.** This check is failing.`
+    : findings.length
+      ? `**${plural(findings.length)}, none at or above MEDIUM.** This check is passing.`
+      : '**No findings.**';
+
+  const lines = ORDER.flatMap((severity) => {
+    const group = findings.filter((f) => f.severity === severity);
+    return group.map((f) => `- **${severity}** · \`${where(f)}\` — ${f.summary}`);
+  });
+
+  return [
+    '## Automatic review',
+    '',
+    head,
+    ...(lines.length ? ['', ...lines] : []),
+    '',
+    '<sub>Posted by the review gate from its own structured output, so this list and',
+    'the check agree by construction. Findings with a line are also inline on the',
+    'diff, written by the reviewer, which may add detail this summary does not.',
+    'Disagreeing with a finding is a reply on the PR, not an edit here — the next',
+    'run rewrites this comment.</sub>',
+    '',
+    markerFor(sha),
+    '',
+  ].join('\n');
+};
+
+/**
+ * Never fails the job. The verdict below is what this step is for, and a comment
+ * that could not be posted must not turn a clean review red or — far worse, given
+ * `if: always()` — mask a real failure behind an HTTP error.
+ */
+const postSummary = async () => {
+  const number = Number(process.env.PR_NUMBER);
+  const sha = process.env.HEAD_SHA;
+
+  try {
+    if (!process.env.GH_TOKEN || !process.env.GITHUB_REPOSITORY || !Number.isInteger(number) || !sha) {
+      throw new Error('missing GH_TOKEN, GITHUB_REPOSITORY, PR_NUMBER or HEAD_SHA');
+    }
+
+    const body = buildSummary(sha);
+    const existing = findSummaryComment(await listIssueComments(number));
+
+    if (existing) {
+      // Rewrites the whole body, which is what removes the superseded banner
+      // `mark-review-stale.mjs` put there at the start of this run.
+      await api(`/issues/comments/${existing.id}`, { method: 'PATCH', body: JSON.stringify({ body }) });
+      console.log(`Updated the review summary (comment ${existing.id}).`);
+    } else {
+      const created = await api(`/issues/${number}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+      console.log(`Posted the review summary (comment ${created.id}).`);
+    }
+  } catch (error) {
+    console.log(`::warning::could not post the review summary: ${error.message}`);
+    console.log('The findings are in the annotations above and in this step\'s log.');
+  }
+};
+
+await postSummary();
 
 if (blocking.length === 0) {
   console.log(`Review found nothing at or above MEDIUM (${findings.length} finding(s) total).`);

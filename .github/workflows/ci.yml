@@ -81,6 +81,26 @@ jobs:
             echo "ok   $f"
           done
 
+      # `node --check` parses a file without resolving its imports, and the
+      # step below only checks paths the *workflow* names. A module the scripts
+      # import from each other is covered by neither, so renaming it would fail
+      # at run time in a consumer's repo — the failure this job exists to
+      # prevent.
+      - name: Check every relative import resolves
+        run: |
+          missing=0
+          while read -r file spec; do
+            target="review/$(basename "$spec")"
+            if [ ! -f "$target" ]; then
+              echo "::error file=$file::imports '$spec', which is not in review/"
+              missing=1
+            else
+              echo "ok   $file -> $target"
+            fi
+          done < <(grep -oHE "from '\./[A-Za-z0-9_.-]+'" review/*.mjs \
+                     | sed -E "s/:from '\.\// /; s/'$//")
+          exit "$missing"
+
       # The workflow compacts the schema with jq and passes the result to
       # --json-schema. Invalid JSON there fails the review step with a quoting
       # error rather than anything that names the schema.

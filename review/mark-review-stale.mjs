@@ -10,14 +10,13 @@
  * that fixed it is merely annoying. A stale "nothing blocking" over a push that
  * broke something is the direction worth spending a step on.
  *
- * The banner is removed by the reviewer itself: it rewrites the whole comment
- * body on success. So if the run is cancelled or dies, the banner stays — which
- * is correct, because the comment really is describing an older commit.
+ * The banner is removed by `check-review-threshold.mjs`, which rewrites the
+ * whole comment body when the review finishes. So if the run is cancelled or
+ * dies, the banner stays — which is correct, because the comment really is
+ * describing an older commit.
  */
 
-import { writeFile } from 'node:fs/promises';
-
-const MARKER = /<!--\s*reviewed-sha:\s*([0-9a-f]{7,40})\s*-->/;
+import { MARKER, api, listIssueComments, findSummaryComment } from './github.mjs';
 
 /**
  * The banner is delimited by its own comments rather than matched by shape.
@@ -47,57 +46,15 @@ const buildBanner = (reviewed, head) =>
 
 const stripBanner = (body) => body.replace(BANNER_BLOCK, '');
 
-const token = process.env.GH_TOKEN;
-const repo = process.env.GITHUB_REPOSITORY;
 const number = Number(process.env.PR_NUMBER);
 const head = process.env.HEAD_SHA;
 
-const api = async (path, init) => {
-  const res = await fetch(`https://api.github.com/repos/${repo}${path}`, {
-    // A hung connection is the one failure the catch below cannot absorb: it
-    // would sit here burning the job's 20 minutes and the review would never
-    // start, to save a cosmetic banner.
-    signal: AbortSignal.timeout(15_000),
-    ...init,
-    headers: {
-      authorization: `bearer ${token}`,
-      accept: 'application/vnd.github+json',
-      'content-type': 'application/json',
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) throw new Error(`${init?.method ?? 'GET'} ${path} -> HTTP ${res.status}`);
-  return res.json();
-};
-
 try {
-  if (!token || !repo || !Number.isInteger(number) || !head) {
+  if (!process.env.GH_TOKEN || !process.env.GITHUB_REPOSITORY || !Number.isInteger(number) || !head) {
     throw new Error('missing GH_TOKEN, GITHUB_REPOSITORY, PR_NUMBER or HEAD_SHA');
   }
 
-  // Oldest-first and paginated: a summary past comment 100 was being reported
-  // as "no previous summary", which silently disables the whole step on any
-  // busy PR. Walk until a page comes back short.
-  const comments = [];
-  for (let page = 1; page <= 10; page++) {
-    const batch = await api(`/issues/${number}/comments?per_page=100&page=${page}`);
-    comments.push(...batch);
-    if (batch.length < 100) break;
-  }
-  // Author-filtered, because the marker is not proof of authorship: it lives in
-  // the body, and anyone quoting the summary — to reply to it, or to argue with
-  // it — carries the marker into their own comment. Without this the newest such
-  // quote wins, and the step then PATCHes a person's comment to prepend a banner
-  // they did not write, while the actual stale summary goes on reading as
-  // current. The token has `issues: write` over the whole repo, so that edit
-  // succeeds.
-  //
-  // `type === 'Bot'` rather than a login: the summary's author moves with
-  // whatever identity the action posts under, which has already been both
-  // github-actions[bot] and the Claude app.
-  const summary = [...comments]
-    .reverse()
-    .find((c) => c.user?.type === 'Bot' && MARKER.test(c.body ?? ''));
+  const summary = findSummaryComment(await listIssueComments(number));
 
   if (!summary) {
     console.log('No previous review summary to mark; nothing to do.');
@@ -128,24 +85,4 @@ try {
   // Cosmetic. A review that runs with an unmarked stale comment is a great deal
   // better than a review that does not run.
   console.log(`::warning::could not mark the previous review stale: ${error.message}`);
-}
-
-// Written unconditionally so the prompt include never dangles.
-if (process.env.OUT_FILE) {
-  await writeFile(
-    process.env.OUT_FILE,
-    [
-      '## Marking your summary',
-      '',
-      `End the top-level summary with this line exactly, on its own:`,
-      '',
-      `<!-- reviewed-sha: ${head ?? 'unknown'} -->`,
-      '',
-      'It is invisible in rendered markdown. It records which commit the summary',
-      'describes, so the next run can mark it superseded rather than leaving a',
-      'reader to assume a comment written four commits ago still applies.',
-      '',
-    ].join('\n'),
-    'utf8'
-  );
 }
