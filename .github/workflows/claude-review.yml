@@ -123,11 +123,28 @@ jobs:
     # `!cancelled()` rather than a bare `always()`: the job still has to run when
     # check-member is *skipped* (gate off) instead of inheriting that skip, but
     # `always()` would also push a review through after the run was cancelled —
-    # spending tokens on work someone explicitly stopped. A failed check-member
-    # leaves is_member empty, so the gate stays fail-closed either way.
+    # spending tokens on work someone explicitly stopped.
+    #
+    # A *failed* check-member is admitted here and rejected by the first step
+    # below, rather than being left to fall out as an unmet condition. It would
+    # skip this job — and a skipped job satisfies a required status check, so
+    # the review a caller made mandatory would report green having never run.
+    # Skipping is fail-closed for the thing check-member guards (no review, no
+    # tokens spent on a stranger's PR) and fail-open for the merge gate, which
+    # is the reading that matters to anyone who marked this check required.
+    # Starting a runner to exit 1 costs seconds and no API tokens.
+    #
+    # check-member has to fail as a *job* to reach this: a permission lookup
+    # that errors is caught in the script and answers 'false', so this is
+    # runner or action infrastructure, not GitHub declining to answer.
+    #
+    # skip-label keeps the skips-as-green property, deliberately — see the
+    # input's description.
     if: |
       !cancelled() &&
-      (inputs.require-write-access == false || needs.check-member.outputs.is_member == 'true') &&
+      (inputs.require-write-access == false ||
+       needs.check-member.outputs.is_member == 'true' ||
+       needs.check-member.result == 'failure') &&
       !contains(github.event.pull_request.labels.*.name, inputs.skip-label)
     permissions:
       contents: read
@@ -135,6 +152,19 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # First, and before anything is checked out: this is the whole reason the
+      # job was allowed to start on a failed gate. Failing here puts the failure
+      # on the check a caller made required, where skipping it would not have.
+      - name: Check the access gate ran
+        if: needs.check-member.result == 'failure'
+        run: |
+          echo "::error::the write-access gate failed, so nobody reviewed this PR."
+          echo "check-member answers 'false' on a permission lookup it cannot make, so a"
+          echo "failure there is the job itself — a runner or action problem. Re-run it."
+          echo "This check fails rather than skipping: a skipped job counts as a passing"
+          echo "required status check, which would report an unreviewed PR as reviewed."
+          exit 1
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:

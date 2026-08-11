@@ -245,6 +245,16 @@ something branch protection already gates on permission and records against a
 person. (`skip-label` is the exception, and it skips the whole review rather
 than a finding — restrict who can apply it.)
 
+Worth knowing before marking `Automatic PR review` required: **a skipped job
+satisfies a required status check.** So every path that skips the review — the
+label, a non-member author, the write-access gate failing — reports green, and
+the check says "reviewed" about a PR nobody reviewed. The first two are the
+intended behaviour. The third was not, so a failed `check-member` now starts the
+review job and fails it in its first step instead of leaving it to skip; that
+costs a runner start and no API tokens. `check-member` answers `'false'` on a
+permission lookup it cannot make, so reaching that step means the job itself
+died — runner or action infrastructure, and a re-run.
+
 The severity rubric that assigns those levels is `review/rubric.md`, here rather
 than in each repo, because the gate and the schema are here: three copies of the
 rubric would drift from the thing scoring them. The workflow appends it to the
