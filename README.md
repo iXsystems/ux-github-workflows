@@ -209,6 +209,16 @@ not, and a review that produced no parseable output fails too — a reviewer tha
 crashed must not read as a reviewer that found nothing. Findings are emitted as
 workflow annotations, so they land on the diff in the Files tab.
 
+**The PR that adopts this workflow will fail this check, once.**
+`claude-code-action` refuses to run when the pull request changes the workflow
+file that invokes it — that is what stops a PR from editing its own reviewer —
+so it skips, emits no structured output, and the gate fails closed. The review
+step "succeeds" in a few seconds without reviewing; the log says `Skipping
+action due to workflow validation`. Re-running does not help, and the branch a
+caller is pinned to has nothing to do with it: the calling workflow has to be on
+the caller's default branch before the review can run. Expect one red check on
+the migration PR, and a working review on the next one.
+
 Whether a failed job blocks a merge is branch protection, set per repo. That is
 the reversible half of the decision, and adopting this workflow does not make it
 for you. There is deliberately no override label: bypassing a red check is
