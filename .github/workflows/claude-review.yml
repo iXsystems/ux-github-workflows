@@ -38,7 +38,6 @@ name: Claude Review (shared)
 #         contents: read
 #         issues: write
 #         pull-requests: write
-#         id-token: write
 #       secrets:
 #         anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
 #
@@ -143,18 +142,32 @@ jobs:
     if: |
       !cancelled() &&
       (inputs.require-write-access == false ||
-       needs.check-member.outputs.is_member == 'true' ||
+       needs.check-member.outputs.is_writer == 'true' ||
        needs.check-member.result == 'failure') &&
       !contains(github.event.pull_request.labels.*.name, inputs.skip-label)
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      id-token: write
     steps:
-      # First, and before anything is checked out: this is the whole reason the
-      # job was allowed to start on a failed gate. Failing here puts the failure
-      # on the check a caller made required, where skipping it would not have.
+      # This job runs with a write token and the caller's API key, against PR
+      # content. That is only safe on `pull_request`, where a fork PR gets a
+      # read-only token and no secrets. On `pull_request_target` (or
+      # `issue_comment`, `workflow_dispatch`, ...) the same job would carry
+      # secrets while the checked-out ref is the caller's to choose — so refuse
+      # to run rather than trust every caller to have wired the trigger right.
+      - name: Assert the triggering event
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "::error::claude-review runs on 'pull_request' only, but the caller"
+          echo "triggered it on '${{ github.event_name }}'. That event grants this"
+          echo "job secrets and a write token over content it does not fully"
+          echo "control. Change the caller's 'on:' to pull_request."
+          exit 1
+
+      # Before anything is checked out: this is the whole reason the job was
+      # allowed to start on a failed gate. Failing here puts the failure on the
+      # check a caller made required, where skipping it would not have.
       - name: Check the access gate ran
         if: needs.check-member.result == 'failure'
         run: |
@@ -256,6 +269,10 @@ jobs:
           # this workflow cannot be reviewed by it: the action skips, emits no
           # structured output, and the gate below fails closed on every
           # migration PR in every repo.
+          #
+          # Because that OIDC exchange never runs, the job needs no
+          # `id-token: write`, and it is deliberately not in the permissions
+          # block above — nothing here mints an OIDC token.
           #
           # Two consequences. Comments come from github-actions[bot] rather than
           # the Claude app, which is what `mark-review-stale.mjs` already edits
