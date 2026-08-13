@@ -18,16 +18,29 @@ name: Claude Review (self)
 # a reason that has nothing to do with the code under review. Read the job log
 # before believing the finding count.
 #
-# `tooling-ref` follows for the same reason. It is the ref the schema, rubric
-# and `review/*.mjs` are checked out from, and it defaults to `master`; left at
-# the default, a pull request editing the rubric would be graded by the old one
-# while running the new workflow.
+# `tooling-ref` follows for the same reason, and is `github.sha` specifically.
+# It is the ref the schema, rubric and `review/*.mjs` are checked out from, and
+# it defaults to `master`; left at the default, a pull request editing the
+# rubric would be graded by the old one while running the new workflow.
 #
-# On a pull request from a fork this degrades rather than misbehaves: the head
-# ref carries the fork's version of the reusable workflow, but `pull_request`
-# gives a fork run no secrets, so `anthropic-api-key` arrives empty and the
-# review step fails — it cannot spend tokens. `require-write-access` is left at
-# its default `true`, which stops a non-writer's pull request before that.
+# It has to be the *same commit* the workflow itself was loaded from, which on
+# `pull_request` is the merge ref — `github.sha`, the pull request merged into
+# `master`. Both the relative `uses:` above and the review job's own
+# `actions/checkout` resolve there. The branch tip
+# (`github.event.pull_request.head.sha`) is a different tree: it lacks anything
+# merged to `master` since the branch was cut, so a `claude-review.yml` from
+# the merge ref could call a `review/` script the branch does not have yet, and
+# the step dies on MODULE_NOT_FOUND. `ci.yml`'s `review-assets` job cannot see
+# that one — it checks that the workflow and `review/` agree within a single
+# tree, which is exactly what pinning the tooling to a second commit breaks.
+#
+# On a pull request from a fork this degrades rather than misbehaves. The merge
+# commit is a commit in this repository, so the tooling checkout resolves; the
+# workflow being run is still the fork's code merged into `master`, but
+# `pull_request` gives a fork run no secrets, so `anthropic-api-key` arrives
+# empty and the review step fails — it cannot spend tokens.
+# `require-write-access` is left at its default `true`, which stops a
+# non-writer's pull request before that.
 
 on:
   pull_request:
@@ -37,7 +50,7 @@ jobs:
   claude-review:
     uses: ./.github/workflows/claude-review.yml
     with:
-      tooling-ref: ${{ github.event.pull_request.head.sha }}
+      tooling-ref: ${{ github.sha }}
     permissions:
       contents: read
       issues: write

@@ -1,13 +1,21 @@
 # What to look for in this repository
 
 This repo publishes reusable GitHub Actions workflows and one composite action.
-Nothing here runs on its own pull requests except CI — the files are executed in
-`truenas/webui`, `truenas/api-client-ts` and `truenas-connect/ui`, which
-reference them at `@master`. So anything merged is live in those repos
-immediately, and a mistake surfaces as *their* CI breaking, with no pull request
-of their own to explain it. Review with that blast radius in mind: the question
-is not only "is this correct" but "what does this do to a caller that did not
-change anything".
+They are executed in `truenas/webui`, `truenas/api-client-ts`,
+`truenas-connect/ui` and `iXsystems/truenas-ui-components`, which reference them
+at `@master`. So anything merged is live in those repos immediately, and a
+mistake surfaces as *their* CI breaking, with no pull request of their own to
+explain it. Review with that blast radius in mind: the question is not only "is
+this correct" but "what does this do to a caller that did not change anything".
+
+Some of it does run here first. This repo calls three of its own workflows by
+relative path — `pr-ticket.yml` runs `check-ticket.yml`, `ci.yml`'s `self-test`
+job runs `check-member.yml`, and `claude-review-self.yml` runs
+`claude-review.yml`, which is what is reviewing this pull request. A relative
+`uses:` resolves at the ref under test, so those three are exercised in their
+proposed form before they merge. That cuts both ways: a change breaking one of
+them breaks its own check here, and the failure looks like a finding until
+someone reads the job log.
 
 Read `README.md` alongside the diff. It is the contract consumers read, and a
 change to an input, a default or a behaviour it documents has to land there too.
@@ -17,7 +25,7 @@ change to an input, a default or a behaviour it documents has to land there too.
 **A silently empty expression.** GitHub resolves an undeclared `inputs.x`,
 a missing secret, or a typo'd `needs.job.outputs.y` to the empty string rather
 than erroring. The condition becomes falsy, the step skips, and the job is
-green. CI's `check-input-refs` job covers the `inputs.*` half of this; the rest
+green. CI's `input-refs` job covers the `inputs.*` half of this; the rest
 — outputs, `env`, secrets — is yours to catch.
 
 **A skipped job satisfying a required status check.** Anything that lets a job

@@ -336,11 +336,21 @@ and the rest of CI does not want it.
 `claude-review-self.yml` is this repo's own adoption of the review, and differs
 from a consumer's copy in two lines. The `uses:` is the local path, so a pull
 request changing the review workflow is reviewed by the version it proposes.
-`tooling-ref` is set to the pull request's head SHA rather than left at
-`master`, so the rubric, schema and `review/*.mjs` come from that pull request
-too — otherwise a change to the rubric would run under the new workflow and be
-graded by the old rules. The guidelines it points the reviewer at are in
+`tooling-ref` is set to `${{ github.sha }}` rather than left at `master`, so the
+rubric, schema and `review/*.mjs` come from that pull request too — otherwise a
+change to the rubric would run under the new workflow and be graded by the old
+rules. The guidelines it points the reviewer at are in
 `.claude/review-prompt.md`, the default path.
+
+`github.sha` and not the head SHA, because it has to be the commit the workflow
+itself was loaded from. On `pull_request` that is the merge ref, where both the
+relative `uses:` and the review job's `actions/checkout` resolve. Pinning the
+tooling to the branch tip instead splits the two: the branch lacks whatever
+reached `master` after it was cut, so a `claude-review.yml` from the merge ref
+can call a `review/` script that is not in the tree the tooling came from, and
+the step dies on `MODULE_NOT_FOUND`. The `review-assets` job does not catch it —
+it checks that the workflow and `review/` agree inside a single tree, and two
+commits is the case it cannot see.
 
 The cost of calling it locally is that a pull request which breaks the review
 workflow breaks its own review, and the failure looks like a review finding
