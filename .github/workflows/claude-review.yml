@@ -368,6 +368,14 @@ jobs:
 
             {{file:.claude-review/tooling/review/rubric.md}}
 
+      # Surface tool calls the reviewer attempted but allowedTools denied, so
+      # the allowlist is tuned on evidence. Notices only; never fails the job.
+      - name: Report denied tool requests
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        run: node .claude-review/tooling/review/report-denied-tools.mjs
+
       - name: Enforce review threshold
         # always(): a review step that fails must not skip the gate, or a broken
         # reviewer reads as a clean bill of health.
