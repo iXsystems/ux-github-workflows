@@ -1,9 +1,16 @@
 name: Check Member Access (shared)
 
-# Reports whether the PR author has write access to the calling repo, as an
-# `is_member` output. Used to route work: main.yml in truenas/webui and
-# truenas-connect/ui sends team PRs to the self-hosted test runner and everyone
-# else to ubuntu-latest.
+# Reports whether the PR author has access to the calling repo, as two outputs:
+#
+#   is_member — write/admin, or a permissive association fallback when the
+#     permission lookup is unavailable. Used to route work: main.yml in
+#     truenas/webui and truenas-connect/ui sends team PRs to the self-hosted
+#     test runner and everyone else to ubuntu-latest. A wrong answer only picks
+#     a runner, so it errs generous.
+#   is_writer — the same, minus the bare org-MEMBER association. Use this to
+#     gate anything that spends a credential on the author's behalf (a review
+#     that runs with a write token and an API key), where a wrong 'true' hands
+#     that context to someone without write on this repo.
 #
 # Usage:
 #   jobs:
@@ -13,9 +20,13 @@ name: Check Member Access (shared)
 #         contents: read
 #       uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@master
 #
-#     something:
+#     route-tests:
 #       needs: [check-member]
 #       if: needs.check-member.outputs.is_member == 'true'
+#
+#     spend-a-credential:
+#       needs: [check-member]
+#       if: needs.check-member.outputs.is_writer == 'true'
 #
 # Only meaningful on `pull_request` events — it reads
 # `context.payload.pull_request`. Callers that also run on push must guard the
@@ -27,8 +38,11 @@ on:
   workflow_call:
     outputs:
       is_member:
-        description: "'true' if the PR author has write or admin access to the calling repo."
+        description: "'true' if the PR author has write/admin access, or (on a failed permission lookup) an org/collaborator association. Permissive — for routing, not for gating a merge."
         value: ${{ jobs.check.outputs.is_member }}
+      is_writer:
+        description: "'true' only for write/admin access, or (on a failed lookup) OWNER/COLLABORATOR. Stricter than is_member — drops bare org MEMBER. Use this to gate anything that spends a credential on the PR author's behalf."
+        value: ${{ jobs.check.outputs.is_writer }}
 
 permissions:
   contents: read
@@ -41,24 +55,35 @@ jobs:
     name: Check member access
     runs-on: ubuntu-latest
     outputs:
-      is_member: ${{ steps.check.outputs.result }}
+      is_member: ${{ steps.check.outputs.is_member }}
+      is_writer: ${{ steps.check.outputs.is_writer }}
     steps:
       - name: Check membership
         id: check
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          result-encoding: string
           script: |
+            // Two outputs from one lookup, because two callers want two policies:
+            //   is_member — routing (which runner a PR's tests land on). Permissive
+            //               on purpose; a wrong answer picks a runner, nothing more.
+            //   is_writer — gating a review that runs with a write token and a live
+            //               API key. A wrong 'true' hands a stranger that context, so
+            //               it drops the one association that need not mean repo write.
+            const set = (member, writer) => {
+              core.setOutput('is_member', member ? 'true' : 'false');
+              core.setOutput('is_writer', writer ? 'true' : 'false');
+            };
+
             // Guard first. Both the happy path and the fallback below read
             // `pull_request`, so on any other event the fallback used to throw
             // a second TypeError *inside* the catch — uncaught, failing the job
             // rather than answering 'false'. Returning here keeps the job green
-            // and the `is_member` output defined for downstream `needs`.
+            // and both outputs defined for downstream `needs`.
             const pullRequest = context.payload.pull_request;
             if (!pullRequest) {
               core.info(`No pull_request payload on a '${context.eventName}' event — reporting not-a-member.`);
-              return 'false';
+              return set(false, false);
             }
 
             try {
@@ -73,22 +98,30 @@ jobs:
 
               console.log(`User ${username} has permission: ${permissionLevel.permission}`);
 
+              // Authoritative: write/admin is exactly the question both outputs
+              // ask, so when the lookup answers, they agree.
               const hasWriteAccess = ['write', 'admin'].includes(permissionLevel.permission);
               console.log(`Has write access: ${hasWriteAccess}`);
 
-              return hasWriteAccess ? 'true' : 'false';
+              return set(hasWriteAccess, hasWriteAccess);
             } catch (error) {
               console.log(`Error checking permissions: ${error.message}`);
 
               // Fall back to the PR author association when the permission
               // lookup fails (e.g. the token cannot read org membership).
-              // Deliberately permissive: this decides where tests run and
-              // whether a review happens, not whether anything merges.
+              // Deliberately permissive for routing; stricter for the gate.
               const association = pullRequest.author_association;
               console.log(`PR author association: ${association}`);
 
+              // Routing keeps its long-standing set, byte-for-byte.
               const isTeamMember = ['MEMBER', 'OWNER', 'COLLABORATOR'].includes(association);
               console.log(`Is team member based on association: ${isTeamMember}`);
 
-              return isTeamMember ? 'true' : 'false';
+              // The gate drops MEMBER: an org member need not have write to *this*
+              // repo. COLLABORATOR can still be read-only — the residual we accept
+              // rather than fail every review closed when the lookup is down.
+              const isWriter = ['OWNER', 'COLLABORATOR'].includes(association);
+              console.log(`Is writer based on association: ${isWriter}`);
+
+              return set(isTeamMember, isWriter);
             }
