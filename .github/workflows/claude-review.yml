@@ -108,17 +108,11 @@ jobs:
   # Referenced by its full `iXsystems/...@ref` path, not a relative one: inside a
   # reusable workflow a relative `uses:` resolves against the *caller's* repo, so
   # `./.github/workflows/check-member.yml` would look for the file in webui.
-  #
-  # MERGE GATE: flip this ref back to @master when this branch merges. It has
-  # to name this branch while the branch lives, because the `review` job below
-  # gates on the `is_writer` output, which @master's check-member does not
-  # expose yet — pinned to @master, this gate came back empty and the review
-  # silently skipped for every caller pinned to this branch.
   check-member:
     if: inputs.require-write-access
     permissions:
       contents: read
-    uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@feat/review-gate-hardening
+    uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@master
 
   review:
     name: Automatic PR review
