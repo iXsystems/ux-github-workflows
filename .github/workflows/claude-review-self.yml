@@ -9,9 +9,9 @@ name: Claude Review (self)
 # that changes the review workflow, the rubric or the scripts under `review/` is
 # reviewed by the version it proposes rather than by the one already merged.
 # That is the same reason ci.yml's `self-test` job calls `check-member.yml`
-# locally: consumers reference @master, so anything merged here is live in three
-# repos immediately, and the alternative to exercising a change before the merge
-# is finding out from someone else's CI.
+# locally: consumers reference @master, so anything merged here is live in every
+# consumer immediately, and the alternative to exercising a change before the
+# merge is finding out from someone else's CI.
 #
 # The cost of that choice is worth stating: a pull request that breaks the
 # review workflow breaks its own review, which shows up as this job failing for

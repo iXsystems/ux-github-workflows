@@ -356,9 +356,10 @@ The cost of calling it locally is that a pull request which breaks the review
 workflow breaks its own review, and the failure looks like a review finding
 until you read the job log. That is the same trade `self-test` already makes,
 and it is the cheaper direction: the alternative is a consumer's CI finding out.
-On a fork's pull request the head ref supplies the workflow but `pull_request`
-supplies no secrets, so the review step fails for want of an API key rather than
-running fork-authored workflow code with one — and `require-write-access` stops
+On a fork's pull request the workflow comes from the merge ref, as on any other
+pull request — the fork's code merged into `master`. What a fork run does not
+get is secrets, so the review step fails for want of an API key rather than
+running fork-authored workflow code with one, and `require-write-access` stops
 a non-writer's pull request before that point.
 
 `api-client-ts` is the repo the review came from. Each consumer migrates by

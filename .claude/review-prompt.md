@@ -61,7 +61,7 @@ part of the change rather than a drive-by.
 **`review/*.mjs`.** These run with plain `node` in the *caller's* workspace,
 with no install step: Node built-ins and `gh`/`GH_TOKEN` only, no npm imports.
 They are also on the path between a review and its verdict, so an unhandled
-throw is a failed job in three repos.
+throw is a failed job in every consumer.
 
 ## Where to be quiet
 
