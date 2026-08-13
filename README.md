@@ -177,10 +177,14 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-      id-token: write
     secrets:
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
 ```
+
+No `id-token: write`: nothing here mints an OIDC token, because the workflow
+passes `github_token` explicitly and that skips the exchange the OIDC token was
+for — see below. The review job's own `permissions:` block does not ask for it
+either, so granting it in a caller has no effect on the token the job runs with.
 
 | Input | Default | Notes |
 |---|---|---|
@@ -319,14 +323,33 @@ which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
 | `iXsystems/truenas-ui-components` | adopted | migrating | n/a — no self-hosted runner | migrating | migrating (#175) |
 | `truenas-connect/ui` | adopted | n/a — no semantic-release | migrating (`main.yaml`) | migrating | migrating (#370) |
 | `truenas/api-client-ts` | migrating | migrating | via the review | migrating | migrating (#33) |
-| `iXsystems/ux-github-workflows` (this repo) | adopted (`pr-ticket.yml`) | n/a — no semantic-release | self-test in `ci.yml` | n/a | n/a |
+| `iXsystems/ux-github-workflows` (this repo) | adopted (`pr-ticket.yml`) | n/a — no semantic-release | self-test in `ci.yml` | n/a | adopted (`claude-review-self.yml`) |
 
-This repo calls two of its own workflows, by relative path rather than
-`@master`, so a change to either is executed on the pull request that makes it
-instead of on a consumer's next one: `pr-ticket.yml` runs `check-ticket.yml`,
-and `ci.yml`'s `self-test` job runs `check-member.yml`. `pr-ticket.yml` is a
+This repo calls three of its own workflows, by relative path rather than
+`@master`, so a change to any of them is executed on the pull request that makes
+it instead of on a consumer's next one: `pr-ticket.yml` runs `check-ticket.yml`,
+`ci.yml`'s `self-test` job runs `check-member.yml`, and
+`claude-review-self.yml` runs `claude-review.yml`. `pr-ticket.yml` is a
 separate file from `ci.yml` because the ticket check needs the `edited` trigger
 and the rest of CI does not want it.
+
+`claude-review-self.yml` is this repo's own adoption of the review, and differs
+from a consumer's copy in two lines. The `uses:` is the local path, so a pull
+request changing the review workflow is reviewed by the version it proposes.
+`tooling-ref` is set to the pull request's head SHA rather than left at
+`master`, so the rubric, schema and `review/*.mjs` come from that pull request
+too — otherwise a change to the rubric would run under the new workflow and be
+graded by the old rules. The guidelines it points the reviewer at are in
+`.claude/review-prompt.md`, the default path.
+
+The cost of calling it locally is that a pull request which breaks the review
+workflow breaks its own review, and the failure looks like a review finding
+until you read the job log. That is the same trade `self-test` already makes,
+and it is the cheaper direction: the alternative is a consumer's CI finding out.
+On a fork's pull request the head ref supplies the workflow but `pull_request`
+supplies no secrets, so the review step fails for want of an API key rather than
+running fork-authored workflow code with one — and `require-write-access` stops
+a non-writer's pull request before that point.
 
 `api-client-ts` is the repo the review came from. Each consumer migrates by
 replacing its own `claude.yml` with a call to this one — a small PR in that
