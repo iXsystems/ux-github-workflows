@@ -179,6 +179,8 @@ jobs:
       pull-requests: write
     secrets:
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+      # or, on subscription auth instead of API billing:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 No `id-token: write`: nothing here mints an OIDC token, because the workflow
@@ -197,7 +199,10 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
 The secret is named, not inherited, because the repos call it different things
-(`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`). The `anthropics/claude-code-action`
+(`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`). Auth is one of two secrets: an Anthropic
+API key, or a Claude Code OAuth token (from `claude setup-token`) for
+subscription billing. Set exactly one; a job with neither fails before the
+checkout. The `anthropics/claude-code-action`
 version is hardcoded rather than an input: `uses:` does not evaluate
 expressions, and a configurable version is how the consumers ended up on
 v1.0.182, v1.0.154 and v1.0.134 in the first place. Bump it here and every
