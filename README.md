@@ -288,6 +288,20 @@ the same as a guidelines file with nothing to say, so the run costs a full
 review that reads as one with guidelines. `.claude-review/` is outside the
 directory the action relocates. A caller can keep its file wherever it likes.
 
+The relocation has a second half the copy does not fix: the tracked files under
+`.claude/` are now missing from the worktree, so `git diff` and `git status` —
+which the reviewer runs to orient itself — report a deletion the pull request
+does not make. The prompt says so, since nothing in the repo the reviewer is
+looking at could tell it otherwise, and a finding raised on that phantom
+deletion at MEDIUM or above would fail the gate over work nobody did.
+
+CI checks that the `{{file:.claude-review/...}}` paths in the prompt agree with
+the steps that write them. Those files do not exist until a run creates them, so
+existence is not checkable here, but a reference and its producer are two
+unrelated string literals and renaming one alone is silent at run time — which
+is how the `prompt-file` reference stayed wrong for the whole life of the
+workflow with no run reporting it.
+
 ## Actions
 
 ### `.github/actions/prepare`

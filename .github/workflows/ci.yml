@@ -102,6 +102,47 @@ jobs:
                      .github/workflows/claude-review.yml | sort -u)
           exit "$missing"
 
+      # The step above checks the paths that exist in this repo. The rest of
+      # `.claude-review/` is written during the run — the two collected files
+      # and the copy of the caller's prompt-file — so existence is not
+      # checkable here, but agreement is: every `{{file:.claude-review/...}}`
+      # the prompt reads has to be a path some step in the same file writes.
+      #
+      # A reference and the step writing it are two unrelated string literals,
+      # and their disagreement is silent at run time: `{{file:...}}` is expanded
+      # by the reviewer alone, a path resolving to nothing produces no error,
+      # and an empty section of the prompt reads exactly like a file with
+      # nothing in it. The prompt-file reference was wrong for the whole life of
+      # this workflow and no run ever said so.
+      - name: Check the generated prompt paths agree with the steps writing them
+        run: |
+          wf=.github/workflows/claude-review.yml
+          written=$(
+            {
+              grep -oE 'OUT_FILE: \.claude-review/[A-Za-z0-9_./-]+' "$wf" |
+                sed 's/^OUT_FILE: //'
+              grep -oE 'cp .+ \.claude-review/[A-Za-z0-9_./-]+' "$wf" |
+                grep -oE '\.claude-review/[A-Za-z0-9_./-]+$'
+            } | sort -u
+          )
+          missing=0
+          while read -r ref; do
+            # Skip the tooling checkout: those are files in this repo, and the
+            # step above already checks them the stronger way.
+            case "$ref" in
+              .claude-review/tooling/*) continue ;;
+            esac
+            if printf '%s\n' "$written" | grep -qxF "$ref"; then
+              echo "ok   $ref"
+            else
+              echo "::error::the prompt reads {{file:$ref}}, but no step in claude-review.yml writes that path."
+              echo "Either the reference or the step that produces it was renamed without the other."
+              missing=1
+            fi
+          done < <(grep -oE '\{\{file:\.claude-review/[A-Za-z0-9_./-]+\}\}' "$wf" |
+                     sed -E 's/^\{\{file:(.*)\}\}$/\1/' | sort -u)
+          exit "$missing"
+
   # Smoke test: this repo calls its own reusable workflow, so a change to
   # check-member.yml is executed before it can be merged rather than after.
   #

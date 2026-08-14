@@ -207,12 +207,17 @@ jobs:
       # the default `prompt-file` — and any path under `.claude/` — is gone by
       # the time the reviewer opens it. Nothing reports that: the reviewer is
       # the only thing expanding `{{file:...}}`, and a path resolving to nothing
-      # looks exactly like a guidelines file with nothing to say. Copying is
-      # also why the existence check above is worth having, rather than being a
-      # duplicate of an error the reviewer would hit anyway.
+      # looks exactly like a guidelines file with nothing to say.
       #
       # `.claude-review/` is this workflow's own directory and outside the one
       # the action relocates, so the copy is readable wherever the original was.
+      # The prompt tells the reviewer about the same relocation, because it also
+      # shows up as a deletion in the diff the reviewer reads.
+      #
+      # The explicit existence check earns its place on its message, not on its
+      # exit status — `cp` fails the step on a missing file by itself. `cp:
+      # cannot stat` names a path and leaves the caller to work out which input
+      # put it there; this names `prompt-file`, which is the thing they change.
       - name: Stage the prompt file
         env:
           PROMPT_FILE: ${{ inputs.prompt-file }}
@@ -338,6 +343,13 @@ jobs:
             `.claude-review/` holds the files this run generated for you. It is
             tooling, not part of the change under review — do not review it, and
             do not comment on it.
+
+            The tool you are running in also moves this repository's `.claude/`
+            directory aside to `.claude-pr/.claude/` before you start, so
+            `git status` and `git diff` report every tracked file under
+            `.claude/` as deleted. That deletion is this job rearranging its
+            own workspace, not a change anyone made in this pull request:
+            ignore it, and never raise a finding on it.
 
             {{file:.claude-review/prior-review-threads.md}}
 
