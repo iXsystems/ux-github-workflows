@@ -177,10 +177,14 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-      id-token: write
     secrets:
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
 ```
+
+No `id-token: write`: nothing here mints an OIDC token, because the workflow
+passes `github_token` explicitly and that skips the exchange the OIDC token was
+for — see below. The review job's own `permissions:` block does not ask for it
+either, so granting it in a caller has no effect on the token the job runs with.
 
 | Input | Default | Notes |
 |---|---|---|
@@ -274,6 +278,30 @@ Everything the run generates, and the tooling checkout itself, goes in
 `.claude-review/` in the workspace, added to `.git/info/exclude` so it stays out
 of `git status` and out of the review.
 
+`prompt-file` is copied there too, and the prompt points the reviewer at the
+copy rather than at the caller's path. `claude-code-action` moves `.claude/`
+aside to `.claude-pr/.claude/` before the reviewer starts, so the default
+`.claude/review-prompt.md` — and anything else under `.claude/` — is not there
+to be read by the time it matters. That failure is silent: the reviewer is the
+only thing that expands `{{file:...}}`, and a path resolving to nothing looks
+the same as a guidelines file with nothing to say, so the run costs a full
+review that reads as one with guidelines. `.claude-review/` is outside the
+directory the action relocates. A caller can keep its file wherever it likes.
+
+The relocation has a second half the copy does not fix: the tracked files under
+`.claude/` are now missing from the worktree, so `git diff` and `git status` —
+which the reviewer runs to orient itself — report a deletion the pull request
+does not make. The prompt says so, since nothing in the repo the reviewer is
+looking at could tell it otherwise, and a finding raised on that phantom
+deletion at MEDIUM or above would fail the gate over work nobody did.
+
+CI checks that the `{{file:.claude-review/...}}` paths in the prompt agree with
+the steps that write them. Those files do not exist until a run creates them, so
+existence is not checkable here, but a reference and its producer are two
+unrelated string literals and renaming one alone is silent at run time — which
+is how the `prompt-file` reference stayed wrong for the whole life of the
+workflow with no run reporting it.
+
 ## Actions
 
 ### `.github/actions/prepare`
@@ -319,14 +347,44 @@ which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
 | `iXsystems/truenas-ui-components` | adopted | migrating | n/a — no self-hosted runner | migrating | migrating (#175) |
 | `truenas-connect/ui` | adopted | n/a — no semantic-release | migrating (`main.yaml`) | migrating | migrating (#370) |
 | `truenas/api-client-ts` | migrating | migrating | via the review | migrating | migrating (#33) |
-| `iXsystems/ux-github-workflows` (this repo) | adopted (`pr-ticket.yml`) | n/a — no semantic-release | self-test in `ci.yml` | n/a | n/a |
+| `iXsystems/ux-github-workflows` (this repo) | adopted (`pr-ticket.yml`) | n/a — no semantic-release | self-test in `ci.yml` | n/a | adopted (`claude-review-self.yml`) |
 
-This repo calls two of its own workflows, by relative path rather than
-`@master`, so a change to either is executed on the pull request that makes it
-instead of on a consumer's next one: `pr-ticket.yml` runs `check-ticket.yml`,
-and `ci.yml`'s `self-test` job runs `check-member.yml`. `pr-ticket.yml` is a
+This repo calls three of its own workflows, by relative path rather than
+`@master`, so a change to any of them is executed on the pull request that makes
+it instead of on a consumer's next one: `pr-ticket.yml` runs `check-ticket.yml`,
+`ci.yml`'s `self-test` job runs `check-member.yml`, and
+`claude-review-self.yml` runs `claude-review.yml`. `pr-ticket.yml` is a
 separate file from `ci.yml` because the ticket check needs the `edited` trigger
 and the rest of CI does not want it.
+
+`claude-review-self.yml` is this repo's own adoption of the review, and differs
+from a consumer's copy in two lines. The `uses:` is the local path, so a pull
+request changing the review workflow is reviewed by the version it proposes.
+`tooling-ref` is set to `${{ github.sha }}` rather than left at `master`, so the
+rubric, schema and `review/*.mjs` come from that pull request too — otherwise a
+change to the rubric would run under the new workflow and be graded by the old
+rules. The guidelines it points the reviewer at are in
+`.claude/review-prompt.md`, the default path.
+
+`github.sha` and not the head SHA, because it has to be the commit the workflow
+itself was loaded from. On `pull_request` that is the merge ref, where both the
+relative `uses:` and the review job's `actions/checkout` resolve. Pinning the
+tooling to the branch tip instead splits the two: the branch lacks whatever
+reached `master` after it was cut, so a `claude-review.yml` from the merge ref
+can call a `review/` script that is not in the tree the tooling came from, and
+the step dies on `MODULE_NOT_FOUND`. The `review-assets` job does not catch it —
+it checks that the workflow and `review/` agree inside a single tree, and two
+commits is the case it cannot see.
+
+The cost of calling it locally is that a pull request which breaks the review
+workflow breaks its own review, and the failure looks like a review finding
+until you read the job log. That is the same trade `self-test` already makes,
+and it is the cheaper direction: the alternative is a consumer's CI finding out.
+On a fork's pull request the workflow comes from the merge ref, as on any other
+pull request — the fork's code merged into `master`. What a fork run does not
+get is secrets, so the review step fails for want of an API key rather than
+running fork-authored workflow code with one, and `require-write-access` stops
+a non-writer's pull request before that point.
 
 `api-client-ts` is the repo the review came from. Each consumer migrates by
 replacing its own `claude.yml` with a call to this one — a small PR in that
