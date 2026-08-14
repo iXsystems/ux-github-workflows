@@ -376,6 +376,18 @@ jobs:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: node .claude-review/tooling/review/report-denied-tools.mjs
 
+      # The full transcript, for debugging a review beyond the denial notices.
+      # It holds only what the reviewer saw and said — PR content and tool
+      # output — but anyone with read access to the run can download it.
+      - name: Upload the review transcript
+        if: always() && steps.review.outputs.execution_file != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review-transcript
+          path: ${{ steps.review.outputs.execution_file }}
+          retention-days: 5
+          if-no-files-found: ignore
+
       - name: Enforce review threshold
         # always(): a review step that fails must not skip the gate, or a broken
         # reviewer reads as a clean bill of health.
