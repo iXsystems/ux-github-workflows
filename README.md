@@ -194,6 +194,7 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `skip-label` | `skip-claude` | |
 | `timeout-minutes` | `20` | |
 | `fetch-depth` | `10` | Must cover the PR range |
+| `extra-allowed-tools` | `''` | Comma-separated permission rules appended to the reviewer's `--allowedTools`, e.g. `Bash(go vet:*)`. Empty by default on purpose: anything that executes repo code runs PR-controlled code next to the job's write token, so each repo opts in as its own recorded decision |
 | `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
 The secret is named, not inherited, because the repos call it different things
