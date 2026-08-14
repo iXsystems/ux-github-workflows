@@ -77,6 +77,14 @@ on:
         description: 'Checkout depth. Needs to cover the PR range for the diff.'
         type: number
         default: 10
+      extra-allowed-tools:
+        description: >-
+          Comma-separated permission rules appended to --allowedTools, for
+          repo-specific needs like `Bash(go vet:*)`. Anything that executes
+          repo code (make, go generate, package scripts) runs PR-controlled
+          code next to this job's write token — allow that knowingly.
+        type: string
+        default: ''
       tooling-ref:
         description: >-
           Ref of this repository to take the schema, rubric and scripts from.
@@ -305,13 +313,15 @@ jobs:
           # nothing itself, hence gh and the inline-comment tool below.
           #
           # allowedTools is the auto-approve list, not the whole toolbox —
-          # Read/Grep/Glob need no approval. Listed: posting, the PR diff, and
-          # read-only git history. Nothing broader (`gh api`, arbitrary Bash):
-          # those can write or exfiltrate with this job's token.
+          # Read/Grep/Glob and provably read-only Bash (grep, sed -n, ls) need
+          # no approval. Listed: posting, PR reads (diff/view/checks), read-only
+          # git history, and Write scoped to the scratch dir. Nothing broader
+          # (`gh api`, arbitrary Bash): those can write or exfiltrate with this
+          # job's token.
           claude_args: |
             --model ${{ inputs.model }}
             --json-schema '${{ steps.schema.outputs.json }}'
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*),Bash(git diff:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*),Bash(git diff:*),Write(.claude-review/**)${{ inputs.extra-allowed-tools != '' && format(',{0}', inputs.extra-allowed-tools) || '' }}"
           # No use_sticky_comment either — it only applies to tag mode.
           prompt: |
             REPO: ${{ github.repository }}
@@ -319,6 +329,10 @@ jobs:
 
             Please review this pull request using the guidelines below.
             It should be already checked out in the current directory.
+
+            The authoritative change set is `gh pr diff` — the checkout's
+            `HEAD~1` is only the newest commit, not the PR range, and a review
+            of it silently misses every earlier commit in the PR.
 
             Put each finding that has a file and line on that line, as an
             inline comment. Use one top-level comment for the summary and
