@@ -278,6 +278,16 @@ Everything the run generates, and the tooling checkout itself, goes in
 `.claude-review/` in the workspace, added to `.git/info/exclude` so it stays out
 of `git status` and out of the review.
 
+`prompt-file` is copied there too, and the prompt points the reviewer at the
+copy rather than at the caller's path. `claude-code-action` moves `.claude/`
+aside to `.claude-pr/.claude/` before the reviewer starts, so the default
+`.claude/review-prompt.md` — and anything else under `.claude/` — is not there
+to be read by the time it matters. That failure is silent: the reviewer is the
+only thing that expands `{{file:...}}`, and a path resolving to nothing looks
+the same as a guidelines file with nothing to say, so the run costs a full
+review that reads as one with guidelines. `.claude-review/` is outside the
+directory the action relocates. A caller can keep its file wherever it likes.
+
 ## Actions
 
 ### `.github/actions/prepare`

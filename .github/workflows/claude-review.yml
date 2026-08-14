@@ -183,18 +183,6 @@ jobs:
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
-      # Fail here rather than let the run proceed: a review with no guidelines
-      # still costs a full run, and reads as a review that had them.
-      - name: Check the prompt file exists
-        env:
-          PROMPT_FILE: ${{ inputs.prompt-file }}
-        run: |
-          if [ ! -f "$PROMPT_FILE" ]; then
-            echo "::error::prompt-file '$PROMPT_FILE' does not exist in ${GITHUB_REPOSITORY}."
-            echo "Create it, or pass a different path as the prompt-file input."
-            exit 1
-          fi
-
       # Everything this workflow adds to the workspace goes under one directory,
       # excluded from git. The reviewer reads the tree it is reviewing; tooling
       # showing up in `git status` is noise at best, and something it might
@@ -209,6 +197,32 @@ jobs:
         run: |
           mkdir -p .claude-review
           echo "/.claude-review/" >> .git/info/exclude
+
+      # Fail here rather than let the run proceed: a review with no guidelines
+      # still costs a full run, and reads as a review that had them.
+      #
+      # The prompt references the copy and never the caller's own path, because
+      # the caller's path may not survive to the review step. The action moves
+      # `.claude/` aside to `.claude-pr/.claude/` before the reviewer starts, so
+      # the default `prompt-file` — and any path under `.claude/` — is gone by
+      # the time the reviewer opens it. Nothing reports that: the reviewer is
+      # the only thing expanding `{{file:...}}`, and a path resolving to nothing
+      # looks exactly like a guidelines file with nothing to say. Copying is
+      # also why the existence check above is worth having, rather than being a
+      # duplicate of an error the reviewer would hit anyway.
+      #
+      # `.claude-review/` is this workflow's own directory and outside the one
+      # the action relocates, so the copy is readable wherever the original was.
+      - name: Stage the prompt file
+        env:
+          PROMPT_FILE: ${{ inputs.prompt-file }}
+        run: |
+          if [ ! -f "$PROMPT_FILE" ]; then
+            echo "::error::prompt-file '$PROMPT_FILE' does not exist in ${GITHUB_REPOSITORY}."
+            echo "Create it, or pass a different path as the prompt-file input."
+            exit 1
+          fi
+          cp "$PROMPT_FILE" .claude-review/review-prompt.md
 
       - name: Check out the review tooling
         uses: actions/checkout@v4
@@ -333,7 +347,7 @@ jobs:
             what the gate reads. The same findings appear in both, at the same
             severity.
 
-            {{file:${{ inputs.prompt-file }}}}
+            {{file:.claude-review/review-prompt.md}}
 
             {{file:.claude-review/tooling/review/rubric.md}}
 
