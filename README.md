@@ -179,8 +179,9 @@ jobs:
       pull-requests: write
     secrets:
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
-      # or, on subscription auth instead of API billing:
-      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # or, on subscription auth instead of API billing — set exactly one of
+      # the two; mapping both fails the job:
+      # claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 No `id-token: write`: nothing here mints an OIDC token, because the workflow

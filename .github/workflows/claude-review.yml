@@ -40,8 +40,9 @@ name: Claude Review (shared)
 #         pull-requests: write
 #       secrets:
 #         anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
-#         # or, on subscription auth instead of API billing:
-#         claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#         # or, on subscription auth instead of API billing — set exactly one
+#         # of the two; mapping both fails the job:
+#         # claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 #
 # The job fails on a blocking finding. Whether that stops a merge is branch
 # protection's decision, made per repo, and reversible without touching this.
@@ -91,14 +92,15 @@ on:
     secrets:
       anthropic-api-key:
         description: >-
-          Anthropic API key. Provide this or claude-code-oauth-token; a step
-          fails the job when both are missing. Mapped by the caller, since the
-          secret name differs per repo.
+          Anthropic API key. Set exactly one of this and
+          claude-code-oauth-token; a step fails the job when both are missing,
+          and also when both are set. Mapped by the caller, since the secret
+          name differs per repo.
         required: false
       claude-code-oauth-token:
         description: >-
           Claude Code OAuth token (from `claude setup-token`) — the
-          subscription alternative to an API key.
+          subscription alternative to an API key. Same exactly-one rule.
         required: false
 
 # One review per PR. Rapid pushes previously started overlapping reviews that
@@ -202,8 +204,8 @@ jobs:
             exit 1
           fi
           if [ -n "$API_KEY" ] && [ -n "$OAUTH_TOKEN" ]; then
-            echo "::error::pass only one of anthropic-api-key and claude-code-oauth-token; both are set,"
-            echo "::error::and they bill different accounts — which one wins would be undocumented."
+            echo "::error::pass only one of anthropic-api-key and claude-code-oauth-token; both are set."
+            echo "They bill different accounts, so which one wins would be undocumented."
             exit 1
           fi
 
