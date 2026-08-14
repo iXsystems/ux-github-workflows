@@ -203,7 +203,7 @@ jobs:
       # from the workspace root.
       - name: Reserve the tooling directory
         run: |
-          mkdir -p .claude-review/scratch
+          mkdir -p .claude-review
           echo "/.claude-review/" >> .git/info/exclude
 
       # Fail here rather than let the run proceed: a review with no guidelines
@@ -314,15 +314,16 @@ jobs:
           #
           # allowedTools is the auto-approve list, not the whole toolbox —
           # Read/Grep/Glob and provably read-only Bash (grep, sed -n, ls) need
-          # no approval. Listed: posting, PR reads (diff/view/checks), read-only
-          # git history, and Write scoped to scratch/ — NOT .claude-review/
-          # itself, which holds the gate scripts later steps execute. Nothing
-          # broader (`gh api`, arbitrary Bash): those can write or exfiltrate
-          # with this job's token.
+          # no approval. Listed: posting, PR reads (diff/view/checks), and
+          # read-only git history. No Write rule: the sandbox refuses workspace
+          # writes at a layer below --allowedTools (verified in-run on PR #8),
+          # so a grant here is a promise that layer breaks. Nothing broader
+          # (`gh api`, arbitrary Bash): those can write or exfiltrate with this
+          # job's token.
           claude_args: |
             --model ${{ inputs.model }}
             --json-schema '${{ steps.schema.outputs.json }}'
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*),Bash(git diff:*),Write(.claude-review/scratch/**)${{ inputs.extra-allowed-tools != '' && format(',{0}', inputs.extra-allowed-tools) || '' }}"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*),Bash(git diff:*)${{ inputs.extra-allowed-tools != '' && format(',{0}', inputs.extra-allowed-tools) || '' }}"
           # No use_sticky_comment either — it only applies to tag mode.
           prompt: |
             REPO: ${{ github.repository }}
@@ -334,6 +335,10 @@ jobs:
             The authoritative change set is `gh pr diff` — the checkout's
             `HEAD~1` is only the newest commit, not the PR range, and a review
             of it silently misses every earlier commit in the PR.
+
+            CI results are `gh pr checks <number>` — never `--watch`, which
+            waits on every check while this review is itself one of them, and
+            so deadlocks until the job timeout.
 
             Put each finding that has a file and line on that line, as an
             inline comment. Use one top-level comment for the summary and
@@ -362,8 +367,8 @@ jobs:
 
             `.claude-review/` holds the files this run generated for you. It is
             tooling, not part of the change under review — do not review it, and
-            do not comment on it. If you need to draft a file, write it under
-            `.claude-review/scratch/` — the one place you can write.
+            do not comment on it. You cannot write files anywhere — compose
+            comment bodies on stdin, as the posting command above does.
 
             The tool you are running in also moves this repository's `.claude/`
             directory aside to `.claude-pr/.claude/` before you start, so
