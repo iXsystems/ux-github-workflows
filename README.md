@@ -201,8 +201,9 @@ either, so granting it in a caller has no effect on the token the job runs with.
 The secret is named, not inherited, because the repos call it different things
 (`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`). Auth is one of two secrets: an Anthropic
 API key, or a Claude Code OAuth token (from `claude setup-token`) for
-subscription billing. Set exactly one; a job with neither fails before the
-checkout. The `anthropics/claude-code-action`
+subscription billing. Set exactly one — a job with neither, or with both,
+fails before the checkout; the two bill different accounts, so an undocumented
+winner is not a choice the workflow will make silently. The `anthropics/claude-code-action`
 version is hardcoded rather than an input: `uses:` does not evaluate
 expressions, and a configurable version is how the consumers ended up on
 v1.0.182, v1.0.154 and v1.0.134 in the first place. Bump it here and every

@@ -190,13 +190,20 @@ jobs:
 
       # Fail before spending a runner minute on a checkout: with neither
       # secret the review step errors anyway, only later and less clearly.
-      - name: Check an auth secret is present
+      # Both is also an error — which credential would win is the CLI's
+      # undocumented pick, and the two bill different accounts.
+      - name: Check exactly one auth secret is present
         env:
           API_KEY: ${{ secrets.anthropic-api-key }}
           OAUTH_TOKEN: ${{ secrets.claude-code-oauth-token }}
         run: |
           if [ -z "$API_KEY" ] && [ -z "$OAUTH_TOKEN" ]; then
             echo "::error::pass anthropic-api-key or claude-code-oauth-token; neither is set."
+            exit 1
+          fi
+          if [ -n "$API_KEY" ] && [ -n "$OAUTH_TOKEN" ]; then
+            echo "::error::pass only one of anthropic-api-key and claude-code-oauth-token; both are set,"
+            echo "::error::and they bill different accounts — which one wins would be undocumented."
             exit 1
           fi
 
@@ -295,7 +302,7 @@ jobs:
         uses: anthropics/claude-code-action@v1.0.187
         with:
           # Both pass through as env vars; the action treats an empty one as
-          # absent and requires at least one. Callers should set exactly one.
+          # absent. The guard step above enforces exactly one is set.
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           # Passed so the action uses this token directly instead of exchanging
