@@ -17,12 +17,64 @@
  * — would go on suppressing findings from every later push.
  */
 
+import { readFileSync } from 'node:fs';
+
 const BLOCKING = new Set(['BLOCKER', 'HIGH', 'MEDIUM']);
+
+/**
+ * Workflow commands are line-oriented, and every field below is written by the
+ * model. A newline in a summary ends the annotation and hands what follows to
+ * the runner as a fresh line — so a finding whose text happens to contain
+ * `::error::`, or `::stop-commands::`, is a finding that writes the log rather
+ * than appearing in it. The mundane version of the same bug is more likely:
+ * a summary with a line break in it silently loses everything after it.
+ *
+ * `maxLength: 200` in the schema bounds how much text arrives, not which bytes,
+ * and nothing validates the payload against that schema before this script
+ * reads it anyway. These are GitHub's own escapes: `%` first, or it would
+ * re-escape the escapes.
+ */
+const escapeData = (value) =>
+  String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+
+/** Property values additionally end at `:` or `,`, which separate the properties. */
+const escapeProperty = (value) => escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
 
 const raw = process.env.FINDINGS?.trim();
 
+/**
+ * When the reviewer died before producing output, the execution log usually
+ * names why — a usage-limit or auth API error beats the generic guidance
+ * below, which sends the reader hunting through the run for a cause the
+ * result entry already states.
+ */
+const terminalApiError = () => {
+  const file = process.env.EXECUTION_FILE?.trim();
+  if (!file) return null;
+  try {
+    const messages = JSON.parse(readFileSync(file, 'utf8'));
+    const result = messages.findLast((m) => m?.type === 'result');
+    if (result?.terminal_reason === 'api_error' || result?.api_error_status) {
+      return String(result.result || `API error (status ${result.api_error_status})`);
+    }
+  } catch {
+    // Unreadable log: fall through to the generic message.
+  }
+  return null;
+};
+
 /** Anything that is not a clean, parseable result is a failure, never a pass. */
 if (!raw) {
+  const apiError = terminalApiError();
+  if (apiError) {
+    console.log(`::error::the review never ran — ${escapeData(apiError)}`);
+    console.log(
+      'The reviewer terminated on an API error before producing output, so there is ' +
+      'nothing to score and this fails closed. This is not a finding in the PR: fix ' +
+      'the API-side condition (usage limit, expired key, outage) and re-run the job.'
+    );
+    process.exit(1);
+  }
   console.log('::error::the review produced no structured output');
   console.log(
     'A review that reports nothing must not read as a review that found nothing, ' +
@@ -55,25 +107,6 @@ try {
   console.log(`::error::could not read the review's structured output: ${error.message}`);
   process.exit(1);
 }
-
-/**
- * Workflow commands are line-oriented, and every field below is written by the
- * model. A newline in a summary ends the annotation and hands what follows to
- * the runner as a fresh line — so a finding whose text happens to contain
- * `::error::`, or `::stop-commands::`, is a finding that writes the log rather
- * than appearing in it. The mundane version of the same bug is more likely:
- * a summary with a line break in it silently loses everything after it.
- *
- * `maxLength: 200` in the schema bounds how much text arrives, not which bytes,
- * and nothing validates the payload against that schema before this script
- * reads it anyway. These are GitHub's own escapes: `%` first, or it would
- * re-escape the escapes.
- */
-const escapeData = (value) =>
-  String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-
-/** Property values additionally end at `:` or `,`, which separate the properties. */
-const escapeProperty = (value) => escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
 
 const blocking = findings.filter((f) => BLOCKING.has(f.severity));
 
