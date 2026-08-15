@@ -40,6 +40,9 @@ name: Claude Review (shared)
 #         pull-requests: write
 #       secrets:
 #         anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+#         # or, on subscription auth instead of API billing — set exactly one
+#         # of the two; mapping both fails the job:
+#         # claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 #
 # The job fails on a blocking finding. Whether that stops a merge is branch
 # protection's decision, made per repo, and reversible without touching this.
@@ -88,8 +91,17 @@ on:
         default: 'master'
     secrets:
       anthropic-api-key:
-        description: 'Anthropic API key. Mapped by the caller, since the secret name differs per repo.'
-        required: true
+        description: >-
+          Anthropic API key. Set exactly one of this and
+          claude-code-oauth-token; a step fails the job when both are missing,
+          and also when both are set. Mapped by the caller, since the secret
+          name differs per repo.
+        required: false
+      claude-code-oauth-token:
+        description: >-
+          Claude Code OAuth token (from `claude setup-token`) — the
+          subscription alternative to an API key. Same exactly-one rule.
+        required: false
 
 # One review per PR. Rapid pushes previously started overlapping reviews that
 # raced to overwrite the same sticky comment, and paid for every superseded run.
@@ -177,6 +189,25 @@ jobs:
           echo "This check fails rather than skipping: a skipped job counts as a passing"
           echo "required status check, which would report an unreviewed PR as reviewed."
           exit 1
+
+      # Fail before spending a runner minute on a checkout: with neither
+      # secret the review step errors anyway, only later and less clearly.
+      # Both is also an error — which credential would win is the CLI's
+      # undocumented pick, and the two bill different accounts.
+      - name: Check exactly one auth secret is present
+        env:
+          API_KEY: ${{ secrets.anthropic-api-key }}
+          OAUTH_TOKEN: ${{ secrets.claude-code-oauth-token }}
+        run: |
+          if [ -z "$API_KEY" ] && [ -z "$OAUTH_TOKEN" ]; then
+            echo "::error::pass anthropic-api-key or claude-code-oauth-token; neither is set."
+            exit 1
+          fi
+          if [ -n "$API_KEY" ] && [ -n "$OAUTH_TOKEN" ]; then
+            echo "::error::pass only one of anthropic-api-key and claude-code-oauth-token; both are set."
+            echo "They bill different accounts, so which one wins would be undocumented."
+            exit 1
+          fi
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -272,7 +303,10 @@ jobs:
         id: review
         uses: anthropics/claude-code-action@v1.0.187
         with:
+          # Both pass through as env vars; the action treats an empty one as
+          # absent. The guard step above enforces exactly one is set.
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           # Passed so the action uses this token directly instead of exchanging
           # its OIDC token for an Anthropic GitHub App token. `setupGitHubToken`
           # returns early on it, and the exchange is the *only* thing that runs

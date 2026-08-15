@@ -37,8 +37,9 @@ name: Claude Review (self)
 # On a pull request from a fork this degrades rather than misbehaves. The merge
 # commit is a commit in this repository, so the tooling checkout resolves; the
 # workflow being run is still the fork's code merged into `master`, but
-# `pull_request` gives a fork run no secrets, so `anthropic-api-key` arrives
-# empty and the review step fails — it cannot spend tokens.
+# `pull_request` gives a fork run no secrets, so both auth secrets arrive
+# empty and the job fails its auth-secret check before the review runs — it
+# cannot spend tokens.
 # `require-write-access` is left at its default `true`, which stops a
 # non-writer's pull request before that.
 
