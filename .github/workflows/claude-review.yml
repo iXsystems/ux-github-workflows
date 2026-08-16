@@ -423,9 +423,34 @@ jobs:
           if-no-files-found: ignore
 
       - name: Enforce review threshold
-        # always(): a review step that fails must not skip the gate, or a broken
-        # reviewer reads as a clean bill of health.
-        if: always()
+        # `!cancelled()` rather than `always()`. A review step that *failed*
+        # must still reach the gate, or a broken reviewer reads as a clean bill
+        # of health — that part is unchanged. A run someone stopped is the case
+        # this excludes: it is not a review that found nothing, it is a review
+        # with no verdict yet.
+        #
+        # Under `always()` that case was routine rather than rare. The
+        # concurrency group above cancels the in-flight run on every new push,
+        # so pushing twice in quick succession left the superseded run red on
+        # `Enforce review threshold`, carrying the empty-output diagnostic —
+        # which sends whoever reads it looking for an auth or
+        # workflow-validation fault that was never there. The newer run reports
+        # the real verdict, against the new head SHA, which is the SHA branch
+        # protection is looking at.
+        #
+        # This is not the skips-as-green hazard the jobs above guard against.
+        # That one is about a *job* being skipped, which counts as a passing
+        # required check; here the job is cancelled, and a cancelled check run
+        # is not a success, so a required check still blocks the merge.
+        #
+        # A job timeout is also not this case: exceeding `timeout-minutes`
+        # fails the job rather than cancelling the workflow, so `cancelled()`
+        # stays false and the gate still runs and still fails closed on the
+        # empty output. Only an explicit cancellation — a person, or the
+        # concurrency group — skips it.
+        #
+        # Wrapped in `${{ }}` because a bare leading `!` is a YAML tag.
+        if: ${{ !cancelled() }}
         env:
           FINDINGS: ${{ steps.review.outputs.structured_output }}
         run: node .claude-review/tooling/review/check-review-threshold.mjs

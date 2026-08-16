@@ -41,7 +41,11 @@ if (!raw) {
     'was skipped.\n' +
     '\n' +
     'Otherwise the run genuinely failed or was cut short: an expired or missing API ' +
-    'key, the job timeout, or a cancelled run.'
+    'key, or the job timeout.\n' +
+    '\n' +
+    'A cancelled run is not this. The gate skips on cancellation, so the superseded ' +
+    'run left behind by a second push does not reach this script — if you are ' +
+    'reading this, something other than the concurrency group ended the review.'
   );
   process.exit(1);
 }
