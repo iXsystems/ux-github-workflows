@@ -428,4 +428,8 @@ jobs:
         if: always()
         env:
           FINDINGS: ${{ steps.review.outputs.structured_output }}
+          # For naming the real cause when there is no output — a reviewer
+          # killed by an API error (usage limit, expired key) says so in the
+          # execution log's result entry.
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: node .claude-review/tooling/review/check-review-threshold.mjs
