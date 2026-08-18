@@ -208,16 +208,24 @@ two bill different accounts, so an undocumented winner is not a choice the
 workflow will make silently. A job with neither fails before the checkout.
 
 Mapping both is the point, not a fallback nobody expects to hit.
-`UX_CLAUDE_CODE_OAUTH_TOKEN` is an *org* secret, granted per repository; one
-that has not been granted to a given repo resolves to the empty string instead
-of failing, and reads identically to a caller that never mapped it. So a repo
-mapping both runs on the subscription where the grant exists and on API billing
-where it does not, and flips over on its own the moment someone adds the grant
-— no second pull request, and no window where review is broken because the
-secret and the workflow landed in the wrong order. It also means an expired
-token degrades to API billing rather than stopping review everywhere at once.
-When the API key is dropped for good, drop that line; until then the pair is
-the intended shape. The `anthropics/claude-code-action`
+`UX_CLAUDE_CODE_OAUTH_TOKEN` is an *org* secret, set on all three orgs the
+consumers live in — `truenas`, `truenas-connect` and `iXsystems` — but granted
+per repository within each. One that has not been granted to a given repo
+resolves to the empty string instead of failing, and reads identically to a
+caller that never mapped it. So a repo mapping both runs on the subscription
+where the grant exists and on API billing where it does not, and flips over on
+its own the moment someone adds the grant — no second pull request, and no
+window where review is broken because the secret and the workflow landed in the
+wrong order. When the API key is dropped for good, drop that line; until then
+the pair is the intended shape.
+
+**The pair is not protection against an expired token.** The pick is made on
+emptiness, and an expired token is a non-empty string: it still wins, the API
+key is still blanked, and every repo holding the grant fails auth at once. The
+API key covers a *missing* grant, never a bad credential. Rotating the token
+before it expires is the only thing that covers that, and the job log names
+which credential it chose — `Authenticating with …` — so a run that broke this
+way says so in its first step. The `anthropics/claude-code-action`
 version is hardcoded rather than an input: `uses:` does not evaluate
 expressions, and a configurable version is how the consumers ended up on
 v1.0.182, v1.0.154 and v1.0.134 in the first place. Bump it here and every
