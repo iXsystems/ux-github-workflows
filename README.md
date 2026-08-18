@@ -178,10 +178,9 @@ jobs:
       issues: write
       pull-requests: write
     secrets:
+      # Subscription auth, preferred when set. Map both: see below.
+      claude-code-oauth-token: ${{ secrets.UX_CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
-      # or, on subscription auth instead of API billing — set exactly one of
-      # the two; mapping both fails the job:
-      # claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 No `id-token: write`: nothing here mints an OIDC token, because the workflow
@@ -203,9 +202,35 @@ either, so granting it in a caller has no effect on the token the job runs with.
 The secret is named, not inherited, because the repos call it different things
 (`CLAUDE_API_KEY` vs `CLAUDE_TOKEN`). Auth is one of two secrets: an Anthropic
 API key, or a Claude Code OAuth token (from `claude setup-token`) for
-subscription billing. Set exactly one — a job with neither, or with both,
-fails before the checkout; the two bill different accounts, so an undocumented
-winner is not a choice the workflow will make silently. The `anthropics/claude-code-action`
+subscription billing. **Map both.** The token wins whenever it is non-empty,
+and the API key is blanked in that case rather than letting the CLI pick — the
+two bill different accounts, so an undocumented winner is not a choice the
+workflow will make silently. A job with neither fails before the checkout.
+
+Mapping both is the point, not a fallback nobody expects to hit.
+`UX_CLAUDE_CODE_OAUTH_TOKEN` is an *org* secret, set on all three orgs the
+consumers live in — `truenas`, `truenas-connect` and `iXsystems` — but granted
+per repository within each. One that has not been granted to a given repo
+resolves to the empty string instead of failing, and reads identically to a
+caller that never mapped it. So a repo mapping both runs on the subscription
+where the grant exists and on API billing where it does not, and flips over on
+its own the moment someone adds the grant — no second pull request, and no
+window where review is broken because the secret and the workflow landed in the
+wrong order. When the API key is dropped for good, drop that line; until then
+the pair is the intended shape.
+
+**The pair is not protection against a token that is present but not working.**
+The pick is made on emptiness, not on validity: a token that has expired, been
+revoked, or run into the subscription's usage limit is still a non-empty
+string, so it still wins, the API key is still blanked, and every repo holding
+the grant loses review at once. The API key covers a *missing* grant, never a
+bad or exhausted credential — nothing here fails over to API billing mid-run.
+Rotating the token before it expires, and watching the subscription's limit,
+are what cover those. The job log names which credential it chose —
+`Authenticating with …` — so a run that broke this way says so in its first
+step, and the gate reports the API error rather than a clean review, since
+`check-review-threshold.mjs` reads the execution log when there is no
+structured output. The `anthropics/claude-code-action`
 version is hardcoded rather than an input: `uses:` does not evaluate
 expressions, and a configurable version is how the consumers ended up on
 v1.0.182, v1.0.154 and v1.0.134 in the first place. Bump it here and every

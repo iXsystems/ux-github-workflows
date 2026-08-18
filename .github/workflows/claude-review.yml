@@ -39,10 +39,10 @@ name: Claude Review (shared)
 #         issues: write
 #         pull-requests: write
 #       secrets:
+#         # Subscription auth. Preferred when set, so a caller can map both and
+#         # let the API key stand in wherever the token has not been granted.
+#         claude-code-oauth-token: ${{ secrets.UX_CLAUDE_CODE_OAUTH_TOKEN }}
 #         anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
-#         # or, on subscription auth instead of API billing — set exactly one
-#         # of the two; mapping both fails the job:
-#         # claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 #
 # The job fails on a blocking finding. Whether that stops a merge is branch
 # protection's decision, made per repo, and reversible without touching this.
@@ -100,15 +100,19 @@ on:
     secrets:
       anthropic-api-key:
         description: >-
-          Anthropic API key. Set exactly one of this and
-          claude-code-oauth-token; a step fails the job when both are missing,
-          and also when both are set. Mapped by the caller, since the secret
-          name differs per repo.
+          Anthropic API key. Used only when claude-code-oauth-token is unset or
+          empty. Mapped by the caller, since the secret name differs per repo.
         required: false
       claude-code-oauth-token:
         description: >-
           Claude Code OAuth token (from `claude setup-token`) — the
-          subscription alternative to an API key. Same exactly-one rule.
+          subscription alternative to an API key, and the credential this
+          workflow prefers. Mapping both is supported and intended: an org
+          secret a repo has not been granted arrives as the empty string, so a
+          caller can map both and get subscription billing wherever the token
+          exists and API billing wherever it does not, with no migration step
+          between granting the secret and using it. A step fails the job when
+          neither is set.
         required: false
 
 # One review per PR. Rapid pushes previously started overlapping reviews that
@@ -200,21 +204,34 @@ jobs:
 
       # Fail before spending a runner minute on a checkout: with neither
       # secret the review step errors anyway, only later and less clearly.
-      # Both is also an error — which credential would win is the CLI's
-      # undocumented pick, and the two bill different accounts.
-      - name: Check exactly one auth secret is present
+      #
+      # Both set is not an error. The two bill different accounts, so the pick
+      # cannot be left to the CLI — but it is made here rather than forbidden,
+      # because callers are expected to map both. An org secret exists at the
+      # org and is granted per repo; one that has not been granted to this repo
+      # resolves to the empty string rather than failing, so "map both, prefer
+      # the token" is what lets a repo switch to subscription billing when the
+      # grant lands, with no second pull request. The review step below passes
+      # the API key only when the token is empty, so the CLI never sees two.
+      - name: Check an auth secret is present
         env:
           API_KEY: ${{ secrets.anthropic-api-key }}
           OAUTH_TOKEN: ${{ secrets.claude-code-oauth-token }}
         run: |
           if [ -z "$API_KEY" ] && [ -z "$OAUTH_TOKEN" ]; then
             echo "::error::pass anthropic-api-key or claude-code-oauth-token; neither is set."
+            echo "An org secret not granted to this repository arrives empty, which looks"
+            echo "identical to one the caller never mapped — check the grant, not only the"
+            echo "workflow file."
             exit 1
           fi
-          if [ -n "$API_KEY" ] && [ -n "$OAUTH_TOKEN" ]; then
-            echo "::error::pass only one of anthropic-api-key and claude-code-oauth-token; both are set."
-            echo "They bill different accounts, so which one wins would be undocumented."
-            exit 1
+          if [ -n "$OAUTH_TOKEN" ]; then
+            echo "Authenticating with claude-code-oauth-token (subscription billing)."
+            if [ -n "$API_KEY" ]; then
+              echo "anthropic-api-key is also set and is ignored while the token is present."
+            fi
+          else
+            echo "Authenticating with anthropic-api-key (API billing)."
           fi
 
       - name: Checkout repository
@@ -312,8 +329,18 @@ jobs:
         uses: anthropics/claude-code-action@v1.0.187
         with:
           # Both pass through as env vars; the action treats an empty one as
-          # absent. The guard step above enforces exactly one is set.
-          anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          # absent. The token wins when it is set, and the API key is blanked
+          # in that case rather than leaving the choice to whichever credential
+          # the CLI happens to read first — the two bill different accounts, so
+          # a silent pick is a billing surprise. The guard step above has
+          # already established at least one of them is non-empty.
+          #
+          # The condition is `== ''` with the key in the *true* arm, not `!= ''`
+          # with `''` in it. `a && b || c` in a GitHub expression yields `b`
+          # only when `b` is itself truthy, and the empty string is falsy, so
+          # `token != '' && '' || key` collapses to `key` every time — the
+          # inverted form is a no-op that reads exactly like a working ternary.
+          anthropic_api_key: ${{ secrets.claude-code-oauth-token == '' && secrets.anthropic-api-key || '' }}
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           # Passed so the action uses this token directly instead of exchanging
           # its OIDC token for an Anthropic GitHub App token. `setupGitHubToken`
