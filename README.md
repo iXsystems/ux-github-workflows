@@ -219,13 +219,18 @@ window where review is broken because the secret and the workflow landed in the
 wrong order. When the API key is dropped for good, drop that line; until then
 the pair is the intended shape.
 
-**The pair is not protection against an expired token.** The pick is made on
-emptiness, and an expired token is a non-empty string: it still wins, the API
-key is still blanked, and every repo holding the grant fails auth at once. The
-API key covers a *missing* grant, never a bad credential. Rotating the token
-before it expires is the only thing that covers that, and the job log names
-which credential it chose — `Authenticating with …` — so a run that broke this
-way says so in its first step. The `anthropics/claude-code-action`
+**The pair is not protection against a token that is present but not working.**
+The pick is made on emptiness, not on validity: a token that has expired, been
+revoked, or run into the subscription's usage limit is still a non-empty
+string, so it still wins, the API key is still blanked, and every repo holding
+the grant loses review at once. The API key covers a *missing* grant, never a
+bad or exhausted credential — nothing here fails over to API billing mid-run.
+Rotating the token before it expires, and watching the subscription's limit,
+are what cover those. The job log names which credential it chose —
+`Authenticating with …` — so a run that broke this way says so in its first
+step, and the gate reports the API error rather than a clean review, since
+`check-review-threshold.mjs` reads the execution log when there is no
+structured output. The `anthropics/claude-code-action`
 version is hardcoded rather than an input: `uses:` does not evaluate
 expressions, and a configurable version is how the consumers ended up on
 v1.0.182, v1.0.154 and v1.0.134 in the first place. Bump it here and every
