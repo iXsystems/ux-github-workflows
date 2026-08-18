@@ -57,4 +57,9 @@ jobs:
       issues: write
       pull-requests: write
     secrets:
+      # Both are mapped, and the shared workflow prefers the token. See its
+      # secret descriptions: `UX_CLAUDE_CODE_OAUTH_TOKEN` is an org secret
+      # granted per repository, so it arrives empty rather than failing
+      # wherever the grant is missing, and the API key covers that case.
+      claude-code-oauth-token: ${{ secrets.UX_CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
