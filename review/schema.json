@@ -16,7 +16,7 @@
         "properties": {
           "severity": {
             "enum": ["BLOCKER", "HIGH", "MEDIUM", "LOW"],
-            "description": "Assigned by the rubric in review/rubric.md. A finding that cannot name its failing input, or quote the claim it says is untrue, is LOW."
+            "description": "Assigned by the rubric in review/rubric.md. A finding that cannot name its failing input, or quote the untrue executable claim (not a comment), is LOW."
           },
           "file": {
             "type": "string",

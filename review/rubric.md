@@ -22,19 +22,33 @@ the list looks short.
      - on a path a caller would normally take          -> BLOCKER
      - only under specific conditions                  -> HIGH
 
-2. Does the change assert something untrue? A type that contradicts what the
-   value can be, a comment or doc describing behaviour the code does not have,
-   a guarantee nothing enforces.                       -> MEDIUM
+2. Does the *executable* change assert something untrue? A type that
+   contradicts what the value can be; a public API, CLI, protocol, or test
+   guarantee nothing enforces; a test that cannot fail or that certifies the
+   wrong walk.
+   Comments, commit messages, internal docs, and CI annotation text that
+   disagree with the code beside them are not this. They are LOW. A sentence
+   a compiler never saw does not hold a merge.         -> MEDIUM
 
-3. Does it leave a mechanism that will silently stop working the next time
+3. Does it leave a *mechanism* that will silently stop working the next time
    someone does an ordinary thing to this repo — a regeneration, a dependency
-   bump, a routine refactor?                           -> MEDIUM
+   bump, a routine refactor?
+   A stale comment that might mislead a future editor is not this. A CI step
+   that still fails the job but with a worse error message is not this.
+                                                       -> MEDIUM
 
 4. Otherwise                                           -> LOW
 
-**If you cannot state the failing input for 1, or quote the untrue claim for 2
-or 3, the finding is LOW.** Severity requires the specific thing that makes it
-severe, not a description of the risk.
+**If you cannot state the failing input for 1, or quote the untrue executable
+claim for 2 or 3, the finding is LOW.** A comment is not that claim. Severity
+requires the specific thing that makes it severe, not a description of the
+risk.
+
+Pre-existing product behaviour that a test or coverage PR merely discovered
+is not a finding on that PR. File an issue.
+
+A finding whose only harm is "a future reader might remove a nearby guard"
+is LOW. The guard is still there.
 
 Reporting no findings is a valid and useful result. Do not manufacture a
 finding, or raise one's severity, to demonstrate thoroughness.
@@ -47,8 +61,8 @@ the finding (in the structured output the `severity` field already carries it,
 so `summary` stays plain — it is rendered into a CI annotation that is already
 prefixed with the level):
 
-> **MEDIUM** — `RELEASING.md:18` documents the old behaviour. The table says
-> the release type is `minor`, which this change makes untrue.
+> **MEDIUM** — `TestParseFlag` asserts that an empty argument errors;
+> `parseFlag` returns a default and nil. The test certifies the wrong walk.
 
 That applies to inline comments and to the top-level comment alike. A reader
 should be able to tell a BLOCKER from a LOW without inferring it from how
