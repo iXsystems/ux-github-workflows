@@ -231,6 +231,13 @@ claim() {
     # templates are left where they are and collected after the clone.
     local listing template built
     template=$(templateNickname)
+    # Under the host's template lock from the listing to the built template:
+    # two claims that both find the template missing would otherwise both
+    # build it, and the second one's "remove the unfrozen leftover" would be
+    # the first one's live build. The second waits here instead and finds
+    # the first one's finished template. Released before the clone, which
+    # needs no exclusivity.
+    lockTemplates
     readDeployments listing
     if ! built=$(templateCreatedIn "$listing" "$template"); then
       echo "appliance.sh: no template '$template' for [$(templateSpec)] on the host, building it first" >&2
@@ -238,6 +245,7 @@ claim() {
     else
       echo "appliance.sh: template '$template' (built $built) is [$(templateSpec)]" >&2
     fi
+    unlockTemplates
     echo "appliance.sh: cloning template '$template' into '$nickname' on $TN_GUEST_HOST" >&2
     json=$(tnGuest clone "$template" \
       --admin-pass "$TN_GUEST_TEMPLATE_PASSWORD" \
@@ -392,6 +400,23 @@ collectTemplates() {
   done <<<"$stale"
 }
 
+# The host's template lock: one build decision at a time per host, taken by
+# `claim` around the listing-and-build sequence and by the `build-template`
+# verb. Kept in the ISO directory because that is the one place every runner
+# on a host shares; a runner with no such directory (a remote host) runs
+# unlocked and says so. Never taken inside build_template itself — a caller
+# already holding it would block on its own lock.
+lockTemplates() {
+  command -v flock > /dev/null || { echo "appliance.sh: no flock; template builds are not serialised" >&2; return 0; }
+  [ -d "$TN_GUEST_ISO_DIR" ] && [ -w "$TN_GUEST_ISO_DIR" ] \
+    || { echo "appliance.sh: $TN_GUEST_ISO_DIR is not writable here; template builds are not serialised" >&2; return 0; }
+  exec 8> "$TN_GUEST_ISO_DIR/.template.lock"
+  flock 8 || die "could not take the template lock in $TN_GUEST_ISO_DIR"
+}
+unlockTemplates() {
+  { exec 8>&-; } 2>/dev/null || true
+}
+
 # Build the template for the current ISO and disk geometry: a bare install
 # from the ISO, shut down after its first boot and snapshotted, under the
 # nickname templateNickname gives it. Built beside whatever templates the
@@ -399,7 +424,8 @@ collectTemplates() {
 # never blocks it and a build that fails leaves the older template usable.
 # Already frozen under that nickname: nothing to do. There but never frozen —
 # a build that died between create and snapshot — it is removed first, which
-# is safe because nothing can have been cloned from it.
+# is safe because nothing can have been cloned from it, and because the
+# caller holds the template lock, so it cannot be another claim's live build.
 #
 # Emits nothing on stdout. The template's password is the one in
 # TN_GUEST_TEMPLATE_PASSWORD; clones rotate away from it, so it never reaches
@@ -663,7 +689,7 @@ case "${1:-}" in
   iso)            shift; iso "$@" ;;
   claim)          shift; claim "$@" ;;
   release)        shift; release "$@" ;;
-  build-template) shift; build_template "$@"; collectTemplates "$(templateNickname)" ;;
+  build-template) shift; lockTemplates; build_template "$@"; unlockTemplates; collectTemplates "$(templateNickname)" ;;
   snapshot)       shift; snapshot "$@" ;;
   revert)         shift; revert "$@" ;;
   *) die "usage: appliance.sh {iso|claim|release|build-template|snapshot|revert} [args]" ;;
