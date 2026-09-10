@@ -139,7 +139,7 @@ inputs:
 
 outputs:
   profile:
-    description: 'The suite profile the appliance was provisioned for (`appliance`).'
+    description: 'The suite profile the appliance is reached with (`shipped`: the UI it serves, or one served beside it).'
   host:
     description: 'host:port of the appliance API over https.'
   host-http:
