@@ -1,0 +1,169 @@
+name: 'TrueNAS appliance'
+description: >-
+  Claim a freshly provisioned TrueNAS appliance on a lab host for the rest of
+  the job, and release it when the job ends, however it ends.
+
+# A JavaScript action rather than a composite one for a single reason: `post`.
+# A composite action has no post step, and a trailing `if: always()` step in
+# the caller is skipped when the runner itself dies. This action's post step
+# runs on success, failure and cancellation, and the appliance's lease
+# (`lifetime`) covers the one case no step can: a runner that never comes
+# back. There is no bundling and no node_modules — main.js and post.js use
+# only Node's built-ins and shell out to appliance.sh, which is where the
+# whole contract with the lab lives.
+#
+# The runner has to reach the lab host's middleware API and have tn_guest.py
+# (iXsystems/api-ci-testbed) with a Python that has truenas_api_client. In
+# the lab that runner *is* the host. See appliance.sh for the layout, the
+# nightly ISO resolution, the templates and the lease.
+#
+# Usage:
+#   - uses: iXsystems/ux-github-workflows/.github/actions/truenas-appliance@master
+#     id: appliance
+#     with:
+#       tn-guest: /mnt/tank/github/api-ci-testbed/jenkins/scripts/tn_guest.py
+#       python: /mnt/tank/github/venv/bin/python3
+#       host-user: ${{ vars.E2E_TN_GUEST_HOST_USER }}
+#       host-api-key: ${{ secrets.TN_GUEST_HOST_API_KEY }}
+#       template-password: ${{ secrets.TN_GUEST_TEMPLATE_PASSWORD }}
+#   - run: curl -k "https://${{ steps.appliance.outputs.host }}/api/v2.0/system/info" ...
+#
+# Every input is a string. Empty means "the script's default".
+
+inputs:
+  baseline:
+    description: 'Baseline to claim. Only `fresh-install` exists today.'
+    required: false
+    default: 'fresh-install'
+  tn-guest:
+    description: 'Path to tn_guest.py on the runner.'
+    required: false
+    default: '/mnt/tank/github/api-ci-testbed/jenkins/scripts/tn_guest.py'
+  python:
+    description: 'Python with truenas_api_client, used to run tn_guest.py.'
+    required: false
+    default: '/mnt/tank/github/venv/bin/python3'
+  host:
+    description: 'The lab host whose middleware API creates the VM. `localhost` when the runner is the host.'
+    required: false
+    default: 'localhost'
+  pool:
+    description: 'ZFS pool on the host for the VM datasets and zvols.'
+    required: false
+    default: 'tank'
+  host-user:
+    description: 'API user on the host. Needs Full Admin.'
+    required: false
+    default: 'root'
+  host-api-key:
+    description: 'API key for that user. Either this or host-password.'
+    required: false
+    default: ''
+  host-password:
+    description: 'Password for that user, if no API key.'
+    required: false
+    default: ''
+  iso:
+    description: >-
+      Pin: host path of the ISO to install from. Empty resolves the newest
+      nightly of `iso-series` from `iso-index` into `iso-dir`, keeping it for
+      `iso-max-age-days` before looking again — which requires the runner to
+      be the host (`host: localhost`); a remote host needs a pin.
+    required: false
+    default: ''
+  refresh-iso:
+    description: '`true` fetches the newest nightly now, ignoring the age and any pin.'
+    required: false
+    default: 'false'
+  iso-dir:
+    description: 'Where nightlies are kept on the host. Default /mnt/<pool>/iso, a child dataset the runner can write.'
+    required: false
+    default: ''
+  iso-index:
+    description: 'Nightly index to read. Default https://iso.sys.truenas.net/TrueNAS-27-Nightlies/'
+    required: false
+    default: ''
+  iso-series:
+    description: 'Build series to follow. Default TrueNAS-27.0.0-MASTER'
+    required: false
+    default: ''
+  iso-max-age-days:
+    description: 'Days a chosen nightly is kept before the next newer one is fetched. Default 7.'
+    required: false
+    default: ''
+  iso-keep:
+    description: 'Nightlies of the series left on disk after a fetch. Default 2.'
+    required: false
+    default: ''
+  template-prefix:
+    description: 'Templates are nicknamed <prefix>-<8 hex of the ISO name and disk geometry>.'
+    required: false
+    default: 'e2e-template'
+  template-keep:
+    description: 'Templates other than the one claimed that are kept on the host, newest first. Default 2.'
+    required: false
+    default: ''
+  template-password:
+    description: >-
+      Admin password baked into templates. Set: a claim clones the template
+      for its ISO (building it first if missing) and rotates the password per
+      claim. Unset: every claim installs from the ISO.
+    required: false
+    default: ''
+  lifetime:
+    description: 'Lease on the appliance, after which the host prunes it whatever happened to the job. Default 3h.'
+    required: false
+    default: ''
+  memory-mb:
+    description: 'Guest memory. Default 6144.'
+    required: false
+    default: ''
+  vcpus:
+    description: 'Guest vCPUs. Default 4.'
+    required: false
+    default: ''
+  os-disk-gb:
+    description: 'OS disk size. Part of the template identity. Default 10.'
+    required: false
+    default: ''
+  data-disk-count:
+    description: 'Number of data disks. Part of the template identity. Default 10.'
+    required: false
+    default: ''
+  data-disk-gb:
+    description: 'Size of each data disk. Part of the template identity. Default 10.'
+    required: false
+    default: ''
+  export-env:
+    description: >-
+      `true` also writes TN_PROFILE, TN_HOST, TN_HOST_HTTP, TN_USERNAME,
+      TN_PASSWORD, TN_DOMAIN, TN_BASELINE and TN_GUEST_ISO to the job
+      environment, for suites that read them from there.
+    required: false
+    default: 'true'
+
+outputs:
+  profile:
+    description: 'The suite profile the appliance is reached with (`shipped`: the UI it serves, or one served beside it).'
+  host:
+    description: 'host:port of the appliance API over https.'
+  host-http:
+    description: 'host:port of the appliance API over plain http.'
+  username:
+    description: 'Admin user on the appliance.'
+  password:
+    description: 'Admin password, generated for this claim and masked in the log.'
+  domain:
+    description: 'The deployment name the host knows the appliance by.'
+  baseline:
+    description: 'The baseline that was claimed.'
+  iso:
+    description: 'Host path of the ISO the appliance (or its template) was installed from.'
+  iso-source:
+    description: '`pinned`, `reused` or `downloaded`.'
+
+runs:
+  using: 'node20'
+  main: 'main.js'
+  post: 'post.js'
+  post-if: 'always()'

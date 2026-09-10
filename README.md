@@ -372,6 +372,63 @@ This replaced identical local copies in `truenas/webui` and `truenas-connect/ui`
 and six inline repetitions in `iXsystems/truenas-ui-components`'s `ci-cd.yml`,
 which had drifted to a floating `'24'` against the others' pinned `24.13.1`.
 
+### `.github/actions/truenas-appliance`
+
+A **JavaScript action** with a `post` step: it claims a freshly provisioned
+TrueNAS appliance on a lab host for the rest of the job and releases it when
+the job ends — on success, failure and cancellation. A composite action cannot
+do that, and a trailing `if: always()` step is skipped when the runner itself
+dies. The appliance's lease (`lifetime`, default 3h) covers the runner that
+never comes back: the next claim on that host prunes whatever has expired.
+
+```yaml
+jobs:
+  e2e:
+    runs-on: [self-hosted, linux, truenas-lab]
+    environment: e2e-lab
+    steps:
+      - uses: iXsystems/ux-github-workflows/.github/actions/truenas-appliance@master
+        id: appliance
+        with:
+          host-user: ${{ vars.E2E_TN_GUEST_HOST_USER }}
+          host-api-key: ${{ secrets.TN_GUEST_HOST_API_KEY }}
+          template-password: ${{ secrets.TN_GUEST_TEMPLATE_PASSWORD }}
+      # TN_HOST, TN_USERNAME, TN_PASSWORD … are now in the job environment,
+      # and on steps.appliance.outputs as host, username, password, …
+      - run: yarn e2e
+      # No release step: the action's post step does it.
+```
+
+| Input | Default | Notes |
+|---|---|---|
+| `baseline` | `fresh-install` | The only baseline that exists today |
+| `tn-guest`, `python` | lab paths | `tn_guest.py` (iXsystems/api-ci-testbed) and a Python with `truenas_api_client`, on the runner |
+| `host`, `pool` | `localhost`, `tank` | The lab host's API and the pool for VM datasets. `localhost` when the runner is the host, which is the lab's layout |
+| `host-user`, `host-api-key` / `host-password` | `root`, none | An account with Full Admin on the host |
+| `iso` | empty | Pin an ISO by host path. Empty resolves the newest v27 nightly, keeps it a week (`iso-max-age-days`), prunes to `iso-keep`; needs the runner to be the host |
+| `refresh-iso` | `'false'` | Fetch the newest nightly now, ignoring the week and the pin |
+| `template-password` | empty | Set: claims clone a template for the ISO, built on first use, password rotated per claim. Unset: every claim installs from the ISO (~4 min instead of ~80 s) |
+| `template-prefix`, `template-keep` | `e2e-template`, `2` | Templates are nicknamed `<prefix>-<8 hex of ISO name + disk geometry>`; beyond the newest `template-keep` others, they are collected once nothing is cloned from them |
+| `lifetime` | `3h` | The lease |
+| `memory-mb`, `vcpus` | `6144`, `4` | Per claim |
+| `os-disk-gb`, `data-disk-count`, `data-disk-gb` | `10`, `10`, `10` | Part of the template identity; changing one builds a new template |
+| `export-env` | `'true'` | Also write `TN_PROFILE`, `TN_HOST`, `TN_HOST_HTTP`, `TN_USERNAME`, `TN_PASSWORD`, `TN_DOMAIN`, `TN_BASELINE`, `TN_GUEST_ISO` to the job environment |
+
+Outputs: `profile`, `host`, `host-http`, `username`, `password` (masked), `domain`,
+`baseline`, `iso`, `iso-source` (`pinned`, `reused` or `downloaded`).
+
+The whole contract with the lab is `appliance.sh` beside the action: `iso`,
+`claim`, `release`, `build-template`, and the environment variables the inputs
+map onto. It runs by hand with the same variables, which is how it is
+debugged. `main.js` and `post.js` use only Node built-ins, so there is nothing
+to bundle and no `node_modules` to commit; they shell out to the script and
+turn its `KEY=VALUE` lines into outputs, environment and the post step's
+state. The password is registered with `add-mask` before it reaches an output.
+
+What the runner has to provide, the timings, and the lessons behind every rule
+in the script are in `truenas/webui`'s `e2e/docs/05-ci.md`, which is where
+this was built and first used.
+
 ## Adoption status
 
 | Repo | `check-ticket` | `pr-title` | `check-member` | `prepare` | review |
