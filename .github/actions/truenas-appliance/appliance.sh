@@ -525,15 +525,27 @@ downloadUrl() {
 }
 
 # Fetch one nightly into TN_GUEST_ISO_DIR, verified when a checksum is published.
+#
+# The download lands in a temporary file that is this process's alone —
+# mktemp in the same directory, so the final mv is a rename — and is removed
+# if anything here fails or the job is cancelled. A shared `<name>.part`
+# would let two claims on the same host write over each other's download,
+# and a cancellation between the download and the rename would leave a
+# whole file that the next run's resume asks the server to continue past
+# the end of. Nothing is resumed: a run that dies mid-download pays the
+# download again, which is two minutes, and never installs from a file it
+# did not fetch whole itself.
 fetchNightly() {
   local name="$1"
-  local target="$TN_GUEST_ISO_DIR/$name" partial="$TN_GUEST_ISO_DIR/$name.part"
+  local target="$TN_GUEST_ISO_DIR/$name" partial
+  partial=$(mktemp "$TN_GUEST_ISO_DIR/.$name.XXXXXX.part") || die "could not create a download file in $TN_GUEST_ISO_DIR"
+  # shellcheck disable=SC2064
+  trap "rm -f '$partial'" EXIT
 
   echo "appliance.sh: downloading $name to $TN_GUEST_ISO_DIR" >&2
-  # Resumable, so a network blip mid-way through 2.7GB costs the remainder,
-  # not the whole file. Silent: the progress meter is thousands of lines in a
-  # CI log, and errors still print.
-  curl -fsSL --retry 3 --retry-delay 10 -C - -o "$partial" "$(downloadUrl "$name")" \
+  # Silent: the progress meter is thousands of lines in a CI log, and errors
+  # still print.
+  curl -fsSL --retry 3 --retry-delay 10 -o "$partial" "$(downloadUrl "$name")" \
     || die "download of $name failed"
 
   local published
@@ -542,7 +554,7 @@ fetchNightly() {
     local actual
     actual=$(sha256sum "$partial" | awk '{print $1}')
     [ "$actual" = "$published" ] \
-      || { rm -f "$partial"; die "checksum mismatch for $name: index says $published, file is $actual"; }
+      || die "checksum mismatch for $name: index says $published, file is $actual"
     echo "appliance.sh: checksum verified" >&2
   else
     echo "appliance.sh: no checksum published for $name; installing it unverified" >&2
@@ -550,6 +562,7 @@ fetchNightly() {
 
   chmod 0644 "$partial"
   mv "$partial" "$target"
+  trap - EXIT
 }
 
 # Drop nightlies of the series beyond the newest TN_GUEST_ISO_KEEP. Only files
@@ -589,6 +602,17 @@ iso() {
     || die "TN_GUEST_ISO_DIR does not exist: $TN_GUEST_ISO_DIR (it has to be a child dataset the runner can write)"
   [ -w "$TN_GUEST_ISO_DIR" ] \
     || die "TN_GUEST_ISO_DIR is not writable by $(id -un): $TN_GUEST_ISO_DIR"
+
+  # One resolution at a time per directory. Two claims on the same host
+  # resolving at once would both find the newest nightly absent and both
+  # fetch it; under the lock the second one finds the first one's file. The
+  # lock is held for the rest of this verb — the download included — and
+  # released when the process ends. flock is util-linux, which every host
+  # this runs on has; without it the resolution simply runs unlocked.
+  if command -v flock > /dev/null; then
+    exec 9> "$TN_GUEST_ISO_DIR/.resolve.lock"
+    flock 9 || die "could not lock $TN_GUEST_ISO_DIR for the resolution"
+  fi
 
   local pointer="$TN_GUEST_ISO_DIR/$currentNightlyFile"
   local current="" age
