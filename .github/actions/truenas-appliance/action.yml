@@ -131,13 +131,15 @@ inputs:
     default: ''
   export-env:
     description: >-
-      `true` also writes TN_HOST, TN_HOST_HTTP, TN_USERNAME, TN_PASSWORD,
-      TN_DOMAIN, TN_BASELINE and TN_GUEST_ISO to the job environment, for
-      suites that read them from there.
+      `true` also writes TN_PROFILE, TN_HOST, TN_HOST_HTTP, TN_USERNAME,
+      TN_PASSWORD, TN_DOMAIN, TN_BASELINE and TN_GUEST_ISO to the job
+      environment, for suites that read them from there.
     required: false
     default: 'true'
 
 outputs:
+  profile:
+    description: 'The suite profile the appliance was provisioned for (`appliance`).'
   host:
     description: 'host:port of the appliance API over https.'
   host-http:

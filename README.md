@@ -412,9 +412,9 @@ jobs:
 | `lifetime` | `3h` | The lease |
 | `memory-mb`, `vcpus` | `6144`, `4` | Per claim |
 | `os-disk-gb`, `data-disk-count`, `data-disk-gb` | `10`, `10`, `10` | Part of the template identity; changing one builds a new template |
-| `export-env` | `'true'` | Also write `TN_HOST`, `TN_HOST_HTTP`, `TN_USERNAME`, `TN_PASSWORD`, `TN_DOMAIN`, `TN_BASELINE`, `TN_GUEST_ISO` to the job environment |
+| `export-env` | `'true'` | Also write `TN_PROFILE`, `TN_HOST`, `TN_HOST_HTTP`, `TN_USERNAME`, `TN_PASSWORD`, `TN_DOMAIN`, `TN_BASELINE`, `TN_GUEST_ISO` to the job environment |
 
-Outputs: `host`, `host-http`, `username`, `password` (masked), `domain`,
+Outputs: `profile`, `host`, `host-http`, `username`, `password` (masked), `domain`,
 `baseline`, `iso`, `iso-source` (`pinned`, `reused` or `downloaded`).
 
 The whole contract with the lab is `appliance.sh` beside the action: `iso`,

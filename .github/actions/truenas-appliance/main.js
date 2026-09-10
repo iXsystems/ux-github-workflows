@@ -22,7 +22,7 @@ function main() {
   group(`Claim an appliance (${baseline})`);
   const claim = appliance(env, 'claim', baseline);
   endGroup();
-  for (const key of ['TN_HOST', 'TN_HOST_HTTP', 'TN_USERNAME', 'TN_PASSWORD', 'TN_DOMAIN', 'TN_BASELINE']) {
+  for (const key of ['TN_PROFILE', 'TN_HOST', 'TN_HOST_HTTP', 'TN_USERNAME', 'TN_PASSWORD', 'TN_DOMAIN', 'TN_BASELINE']) {
     if (!claim[key]) {
       throw new Error(`appliance.sh claim printed no ${key}`);
     }
@@ -36,6 +36,7 @@ function main() {
   saveState('domain', claim.TN_DOMAIN);
 
   const outputs = {
+    'profile': claim.TN_PROFILE,
     'host': claim.TN_HOST,
     'host-http': claim.TN_HOST_HTTP,
     'username': claim.TN_USERNAME,
@@ -50,7 +51,7 @@ function main() {
   }
 
   if (input('export-env') !== 'false') {
-    for (const key of ['TN_HOST', 'TN_HOST_HTTP', 'TN_USERNAME', 'TN_PASSWORD', 'TN_DOMAIN', 'TN_BASELINE']) {
+    for (const key of ['TN_PROFILE', 'TN_HOST', 'TN_HOST_HTTP', 'TN_USERNAME', 'TN_PASSWORD', 'TN_DOMAIN', 'TN_BASELINE']) {
       exportEnv(key, claim[key]);
     }
     exportEnv('TN_GUEST_ISO', iso.TN_GUEST_ISO);
