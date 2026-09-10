@@ -70,6 +70,9 @@
 #                       templates are nicknamed <prefix>-<8 hex>, the hex a
 #                       hash of the ISO name and disk geometry they were
 #                       built from (default: e2e-template)
+#   TN_GUEST_TEMPLATE_KEEP
+#                       how many templates other than the one being claimed
+#                       are kept on the host, newest first (default: 2)
 #   TN_GUEST_TEMPLATE_PASSWORD
 #                       the templates' admin password. Set: claims clone the
 #                       template and rotate the password per claim. Unset:
@@ -114,6 +117,7 @@ TN_GUEST_POOL="${TN_GUEST_POOL:-tank}"
 TN_GUEST_HOST_USER="${TN_GUEST_HOST_USER:-root}"
 TN_GUEST_LIFETIME="${TN_GUEST_LIFETIME:-3h}"
 TN_GUEST_TEMPLATE_PREFIX="${TN_GUEST_TEMPLATE_PREFIX:-e2e-template}"
+TN_GUEST_TEMPLATE_KEEP="${TN_GUEST_TEMPLATE_KEEP:-2}"
 TN_GUEST_MEMORY_MB="${TN_GUEST_MEMORY_MB:-6144}"
 TN_GUEST_VCPUS="${TN_GUEST_VCPUS:-4}"
 TN_GUEST_OS_DISK_GB="${TN_GUEST_OS_DISK_GB:-10}"
@@ -197,10 +201,15 @@ claim() {
   echo "appliance.sh: pruning deployments whose lifetime has expired" >&2
   tnGuest prune >&2 || echo "appliance.sh: prune failed; continuing with the claim" >&2
 
-  # A name the lab can trace back to a run and attempt, and a password nobody
-  # else knows. The attempt matters: a re-run keeps the run id, and a nickname
-  # that repeats would collide with anything the previous attempt leaked.
-  local nickname="e2e-${GITHUB_RUN_ID:-local-$$}-${GITHUB_RUN_ATTEMPT:-1}"
+  # A name the lab can trace back to a run and attempt, unique per claim, and
+  # a password nobody else knows. The attempt matters: a re-run keeps the run
+  # id, and a nickname that repeats would collide with anything the previous
+  # attempt leaked. The random tail matters for the same reason one step
+  # further: every job of a run shares the run id and attempt, so two jobs
+  # claiming on one host — shards, or a second suite — would otherwise ask
+  # for the same name, and `release` resolves by name. Nothing reconstructs
+  # the name later; release gets it from the caller or from the file below.
+  local nickname="e2e-${GITHUB_RUN_ID:-local-$$}-${GITHUB_RUN_ATTEMPT:-1}-$(openssl rand -hex 3)"
   local password
   password=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-20)
 
@@ -245,6 +254,11 @@ claim() {
     else
       echo "appliance.sh: template '$template' (built $built) is [$(templateSpec)]" >&2
     fi
+    # Collection happens under the same lock, before the clone: a template
+    # another claim is building right now is the newest on the host and is
+    # kept by the policy, and nobody can start building one until this
+    # decision is over.
+    collectTemplates "$template"
     unlockTemplates
     echo "appliance.sh: cloning template '$template' into '$nickname' on $TN_GUEST_HOST" >&2
     json=$(tnGuest clone "$template" \
@@ -255,7 +269,6 @@ claim() {
       --memory-mb "$TN_GUEST_MEMORY_MB" \
       --vcpus "$TN_GUEST_VCPUS") \
       || die "tn_guest.py clone failed for '$nickname'"
-    collectTemplates "$template"
   else
     echo "appliance.sh: creating '$nickname' on $TN_GUEST_HOST from $TN_GUEST_ISO" >&2
     json=$(tnGuest create \
@@ -340,16 +353,22 @@ templateCreatedIn() {
     <<<"$1"
 }
 
-# The templates in the listing in $1 that carry this script's prefix and are
-# not $2, one nickname per line: the ones a claim no longer needs. The bare
-# prefix counts too — it is what templates were called before the hash was
-# part of the name, and the one on the lab box is otherwise orphaned.
+# The templates in the listing in $1 that carry this script's prefix, are
+# not $2, and are not among the newest TN_GUEST_TEMPLATE_KEEP by creation
+# time, one nickname per line: the ones no claim is likely to want again.
+# Newest-N rather than "everything but mine": two callers on one host with
+# different pins or geometry would otherwise delete each other's template
+# on every claim and both pay the install every time, and a template another
+# claim is building this minute is the newest of all and must stay. The
+# bare prefix counts as prefixed — it is what templates were called before
+# the hash was part of the name, and the one on the lab box is otherwise
+# orphaned.
 staleTemplatesIn() {
-  jq -r --arg p "$TN_GUEST_TEMPLATE_PREFIX" --arg keep "$2" \
+  jq -r --arg p "$TN_GUEST_TEMPLATE_PREFIX" --arg keep "$2" --argjson n "$TN_GUEST_TEMPLATE_KEEP" \
     'map(select((.template == true or .template == "true")
-                and ((.nickname // "" | startswith($p + "-")) or .nickname == $p)
-                and .nickname != $keep))
-     | .[].nickname' \
+                and ((.nickname // "" | startswith($p + "-")) or .nickname == $p)))
+     | sort_by(.created // "") | reverse
+     | map(select(.nickname != $keep)) | .[$n:] | .[].nickname' \
     <<<"$1"
 }
 
@@ -371,14 +390,15 @@ templateNickname() {
   printf '%s-%s' "$TN_GUEST_TEMPLATE_PREFIX" "$digest"
 }
 
-# Delete the templates a claim no longer needs: every one with this script's
-# prefix other than $1, the one just cloned. Best effort, after the clone:
-# a template with live clones — a run on another runner, a leaked appliance
-# its lease has not yet expired, somebody's debugging clone — cannot be
-# deleted, and must not fail this claim for it. It is tried again by the
-# next claim, by which time the lease has usually run out and `prune` has
-# taken the clone. This is why a new template is built beside the old one
-# rather than in its place: the build never has to wait on anybody's clone.
+# Delete the templates a claim no longer needs — see staleTemplatesIn for
+# which — keeping $1, the one about to be cloned. Best effort, under the
+# template lock: a template with live clones — a run on another runner, a
+# leaked appliance its lease has not yet expired, somebody's debugging
+# clone — cannot be deleted, and must not fail this claim for it. It is
+# tried again by the next claim, by which time the lease has usually run out
+# and `prune` has taken the clone. This is why a new template is built
+# beside the old one rather than in its place: the build never has to wait
+# on anybody's clone.
 collectTemplates() {
   local keep="$1" listing stale
   # Not readDeployments: that one is fatal by design, and this runs after
@@ -622,6 +642,12 @@ iso() {
     return
   fi
 
+  # The nightly is fetched by this process, into a directory on this
+  # machine, and the path is then handed to the host's middleware. That only
+  # works when this machine is the host. A runner driving a remote host
+  # pins an ISO that already exists there.
+  [ "$TN_GUEST_HOST" = "localhost" ] \
+    || die "TN_GUEST_HOST is $TN_GUEST_HOST, not this machine: a nightly resolved here would not exist there. Pin TN_GUEST_ISO to a path on that host."
   command -v curl > /dev/null || die "curl is required to resolve a nightly"
   command -v sha256sum > /dev/null || die "sha256sum is required to verify a nightly"
   [ -d "$TN_GUEST_ISO_DIR" ] \

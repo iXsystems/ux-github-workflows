@@ -405,10 +405,10 @@ jobs:
 | `tn-guest`, `python` | lab paths | `tn_guest.py` (iXsystems/api-ci-testbed) and a Python with `truenas_api_client`, on the runner |
 | `host`, `pool` | `localhost`, `tank` | The lab host's API and the pool for VM datasets. `localhost` when the runner is the host, which is the lab's layout |
 | `host-user`, `host-api-key` / `host-password` | `root`, none | An account with Full Admin on the host |
-| `iso` | empty | Pin an ISO by host path. Empty resolves the newest v27 nightly, keeps it a week (`iso-max-age-days`), prunes to `iso-keep` |
+| `iso` | empty | Pin an ISO by host path. Empty resolves the newest v27 nightly, keeps it a week (`iso-max-age-days`), prunes to `iso-keep`; needs the runner to be the host |
 | `refresh-iso` | `'false'` | Fetch the newest nightly now, ignoring the week and the pin |
 | `template-password` | empty | Set: claims clone a template for the ISO, built on first use, password rotated per claim. Unset: every claim installs from the ISO (~4 min instead of ~80 s) |
-| `template-prefix` | `e2e-template` | Templates are nicknamed `<prefix>-<8 hex of ISO name + disk geometry>`; old ones are collected once nothing is cloned from them |
+| `template-prefix`, `template-keep` | `e2e-template`, `2` | Templates are nicknamed `<prefix>-<8 hex of ISO name + disk geometry>`; beyond the newest `template-keep` others, they are collected once nothing is cloned from them |
 | `lifetime` | `3h` | The lease |
 | `memory-mb`, `vcpus` | `6144`, `4` | Per claim |
 | `os-disk-gb`, `data-disk-count`, `data-disk-gb` | `10`, `10`, `10` | Part of the template identity; changing one builds a new template |

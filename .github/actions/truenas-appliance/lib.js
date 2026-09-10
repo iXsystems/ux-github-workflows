@@ -31,6 +31,7 @@ const inputToEnv = {
   'iso-max-age-days': 'TN_GUEST_ISO_MAX_AGE_DAYS',
   'iso-keep': 'TN_GUEST_ISO_KEEP',
   'template-prefix': 'TN_GUEST_TEMPLATE_PREFIX',
+  'template-keep': 'TN_GUEST_TEMPLATE_KEEP',
   'template-password': 'TN_GUEST_TEMPLATE_PASSWORD',
   'lifetime': 'TN_GUEST_LIFETIME',
   'memory-mb': 'TN_GUEST_MEMORY_MB',

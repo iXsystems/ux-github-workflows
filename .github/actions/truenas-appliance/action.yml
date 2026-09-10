@@ -67,7 +67,8 @@ inputs:
     description: >-
       Pin: host path of the ISO to install from. Empty resolves the newest
       nightly of `iso-series` from `iso-index` into `iso-dir`, keeping it for
-      `iso-max-age-days` before looking again.
+      `iso-max-age-days` before looking again — which requires the runner to
+      be the host (`host: localhost`); a remote host needs a pin.
     required: false
     default: ''
   refresh-iso:
@@ -98,6 +99,10 @@ inputs:
     description: 'Templates are nicknamed <prefix>-<8 hex of the ISO name and disk geometry>.'
     required: false
     default: 'e2e-template'
+  template-keep:
+    description: 'Templates other than the one claimed that are kept on the host, newest first. Default 2.'
+    required: false
+    default: ''
   template-password:
     description: >-
       Admin password baked into templates. Set: a claim clones the template
