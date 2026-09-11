@@ -201,7 +201,7 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `timeout-minutes` | `20` | |
 | `fetch-depth` | `10` | Must cover the PR range |
 | `extra-allowed-tools` | `''` | Comma-separated permission rules appended to the reviewer's `--allowedTools`, e.g. `Bash(go vet:*)`. Empty by default on purpose: anything that executes repo code runs PR-controlled code next to the job's write token, so each repo opts in as its own recorded decision |
-| `approve-when-clean` | `false` | Submit an APPROVE review when nothing blocks and no human review is needed. Off, the same outcome is a COMMENT saying it would have approved — run that way first and watch the calls |
+| `approve-when-clean` | `true` | Submit an APPROVE review when nothing blocks and no human review is needed. Set `false` to get a COMMENT saying it would have approved instead, to watch the calls before they count |
 | `human-review-paths` | `''` | Newline-separated globs, gitignore rules: `*`, `**`, `?`; a name with no slash (trailing one aside) matches at any depth, one with a slash is root-anchored, a directory match covers everything beneath it; no `!`, leading `/`, brackets or braces; `#` lines ignored. A PR touching a match always gets the needs-a-human COMMENT, whatever the reviewer decided |
 | `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
@@ -324,8 +324,9 @@ Making the review count is branch protection, per repo:
 - **Require 1 approval** and mark `Automatic PR review` required. The
   workflow's approval satisfies the first, which is the whole mechanism and the
   whole risk: a PR the reviewer misjudges as routine merges with no person
-  involved. Start with `approve-when-clean` off, read the "would approve"
-  comments for a while, and turn it on once the human-review calls look right.
+  involved. A repo that wants to see the calls first can set
+  `approve-when-clean: false`, read the "would approve" comments for a while,
+  and drop the line once they look right.
 - **Dismiss stale pull request approvals when new commits are pushed.**
   Without it an approval of one commit still counts while the next is being
   re-reviewed, and `cancel-in-progress` makes that window real.

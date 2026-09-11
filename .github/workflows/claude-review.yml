@@ -102,13 +102,13 @@ on:
       approve-when-clean:
         description: >-
           Submit an APPROVE review when nothing blocks and no human review is
-          needed. Off by default: the same outcome is then a COMMENT saying it
-          would have approved, so a repo can watch the calls before letting
-          them count towards required approvals. With the job token this also
-          needs "Allow GitHub Actions to create and approve pull requests" in
-          the repository's Actions settings.
+          needed. Set false to get a COMMENT saying it would have approved
+          instead, for a repo that wants to watch the calls before letting
+          them count towards required approvals. With the job token this
+          also needs "Allow GitHub Actions to create and approve pull
+          requests" in the repository's Actions settings.
         type: boolean
-        default: false
+        default: true
       human-review-paths:
         description: >-
           Newline-separated globs with gitignore rules: `*`, `**`, `?`; a
