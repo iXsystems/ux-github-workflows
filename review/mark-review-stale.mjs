@@ -16,6 +16,7 @@
  */
 
 import { writeFile } from 'node:fs/promises';
+import { isOwn } from './identity.mjs';
 
 const MARKER = /<!--\s*reviewed-sha:\s*([0-9a-f]{7,40})\s*-->/;
 
@@ -92,12 +93,11 @@ try {
   // current. The token has `issues: write` over the whole repo, so that edit
   // succeeds.
   //
-  // `type === 'Bot'` rather than a login: the summary's author moves with
-  // whatever identity the action posts under, which has already been both
-  // github-actions[bot] and the Claude app.
+  // Matched on the identity this run posts as (see identity.mjs), which is
+  // what `gh pr comment --edit-last` will rewrite.
   const summary = [...comments]
     .reverse()
-    .find((c) => c.user?.type === 'Bot' && MARKER.test(c.body ?? ''));
+    .find((c) => isOwn(c.user) && MARKER.test(c.body ?? ''));
 
   if (!summary) {
     console.log('No previous review summary to mark; nothing to do.');

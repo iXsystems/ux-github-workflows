@@ -5,7 +5,7 @@ review prompt, after it. That split is deliberate: the repo's file says what to
 look for in *its* code, and this one says how to grade and report whatever the
 review finds.
 
-It lives next to the gate that reads the result — `check-review-threshold.mjs`
+It lives next to the gate that reads the result — `submit-verdict.mjs`
 fails the job at MEDIUM and above, and `schema.json` fixes the four severity
 names. A repo that carried its own copy of this could drift from either, and
 the drift would show up as a check that passes or fails for reasons nobody
@@ -98,12 +98,41 @@ The reverse matters too. Do not hedge a genuinely clean review into sounding
 qualified: if there are no findings, or only LOW ones, say so plainly, because
 that is the result that lets someone merge.
 
+## Does this need a human?
+
+Grading findings answers "is anything wrong". This answers a different
+question: must a person look at this change before it merges, even when
+nothing is wrong. Report it in `human_review`, and say it in the summary's
+opening line after the count.
+
+Answer `required: true`, with one reason per line naming the file or change,
+when the change does any of these:
+
+- alters a public API, exported type, CLI, protocol, or file format that
+  callers depend on;
+- adds a dependency, or takes one across a major version;
+- touches CI, release, auth, permissions, or secrets handling;
+- changes user-facing behaviour, wording, defaults, or whether a feature is
+  available;
+- removes or weakens a test;
+- migrates data or changes a schema;
+- makes a choice the PR description itself presents as a decision, or that the
+  repository's own guidelines say a person decides.
+
+Otherwise answer `required: false` with an empty `reasons`. Size is not a
+reason: a large mechanical change covered by its tests does not need a person
+because it is large. Nor is a LOW finding — that is already reported as one.
+
+The workflow submits a PR review from this answer. `false` on a clean change
+is what lets the workflow approve it, so the answer is a claim the check acts
+on, not a hedge.
+
 ## Machine-readable summary
 
 Return your findings as structured output matching the JSON schema this run was
-started with — severity, file, line, and a one-line summary with no markdown.
-The severity enum is enforced by the schema, so it can only be one of the four
-above.
+started with — severity, file, line, and a one-line summary with no markdown —
+plus `human_review` from the section above. The severity enum is enforced by
+the schema, so it can only be one of the four above.
 
 Include every finding, LOW ones too. An empty array is valid and expected on a
 clean change; it is not a sign the review failed.

@@ -4,7 +4,7 @@
   "description": "Structured result of the automated PR review. Severity is an enum so a gate can key off it: without the schema the reviewer invents its own labels each run, which is fine for a comment and useless for a check.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["findings"],
+  "required": ["findings", "human_review"],
   "properties": {
     "findings": {
       "type": "array",
@@ -32,6 +32,20 @@
             "maxLength": 200,
             "description": "One line, no markdown. This is what appears as a CI annotation on the diff."
           }
+        }
+      }
+    },
+    "human_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "reasons"],
+      "description": "Whether a person must review this change before it merges, decided by the 'Does this need a human' section of review/rubric.md. Independent of findings: a clean change can still need one.",
+      "properties": {
+        "required": { "type": "boolean" },
+        "reasons": {
+          "type": "array",
+          "description": "One line each, naming the file or change. Empty when required is false.",
+          "items": { "type": "string", "maxLength": 200 }
         }
       }
     }
