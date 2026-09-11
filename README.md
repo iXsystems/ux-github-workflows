@@ -245,14 +245,22 @@ caller moves.
 **`github-token` is optional and changes who posts.** Left empty, comments and
 the review come from `github-actions[bot]` under the job's `permissions:`
 block. Set, they come from that token's identity. Use a machine account's
-fine-grained PAT (Contents read, Pull requests write, Issues write on the
-consuming repos) or a GitHub App installation token, and **not a person's
-token**: GitHub refuses to approve or request changes on the token owner's own
-PRs, so every PR that person opens would be un-gateable. A PAT is not narrowed
-by the job's `permissions:` block — the reviewer's tool allowlist is the only
-scope on it, which is one more reason that list stays tight. A machine
-account's approval counts towards required approvals like any user's, and
-needs no Actions setting; `github-actions[bot]`'s needs one (below).
+fine-grained PAT (Contents read, Pull requests write, Issues write) **scoped
+to the one repository**, or a GitHub App installation token, and **not a
+person's token**. Two reasons: GitHub refuses to approve or request changes
+on the token owner's own PRs, so every PR that person opens would be
+un-gateable — the loud failure — and the verdict step dismisses the posting
+identity's earlier approvals as its own, so a person's hand-written approval
+on someone else's PR is silently dismissed — the quiet one.
+
+Nothing narrows a PAT. The job's `permissions:` block does not apply to it,
+and the reviewer's allowlist is a list of command prefixes, not a repository
+boundary: `gh pr comment 42 --repo other/repo` is inside `Bash(gh pr
+comment:*)`. The reviewer processes PR-controlled content, so the PAT's
+repository list is exactly how far an injection can write. One token per
+repository keeps that to the repository under review. A machine account's
+approval counts towards required approvals like any user's, and needs no
+Actions setting; `github-actions[bot]`'s needs one (below).
 
 **A repo must not keep its own inline review running alongside this.** Both
 post as the same identity by default, and this one's `gh pr comment

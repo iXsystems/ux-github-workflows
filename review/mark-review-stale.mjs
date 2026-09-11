@@ -93,9 +93,11 @@ try {
   // succeeds.
   //
   // Matched on the login this run posts as, which is what `gh pr comment
-  // --edit-last` will rewrite. REVIEW_LOGIN is empty only for a GitHub App
-  // token (no /user for those); the author type stands in, and the worst
-  // case of a wrong match here is a banner on another bot's summary.
+  // --edit-last` will rewrite. REVIEW_LOGIN is empty for a GitHub App token
+  // (no /user for those) and after a transient /user failure; the author
+  // type stands in. That finds an App's summary, can put a banner on
+  // another bot's, and finds nothing for a machine user, which is a missing
+  // banner: cosmetic either way.
   const login = process.env.REVIEW_LOGIN;
   const summary = [...comments]
     .reverse()

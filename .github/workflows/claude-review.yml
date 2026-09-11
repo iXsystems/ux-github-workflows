@@ -94,7 +94,9 @@ on:
           Comma-separated permission rules appended to --allowedTools, for
           repo-specific needs like `Bash(go vet:*)`. Anything that executes
           repo code (make, go generate, package scripts) runs PR-controlled
-          code next to this job's write token — allow that knowingly.
+          code next to this job's write token — or the github-token secret,
+          which reaches every repository it was granted — allow that
+          knowingly.
         type: string
         default: ''
       approve-when-clean:
@@ -150,11 +152,15 @@ on:
           Token to post comments and the review as. Empty means the job's own
           token, so everything comes from github-actions[bot]. Use a machine
           account's fine-grained PAT (Contents read, Pull requests write,
-          Issues write on the consuming repos) or a GitHub App installation
-          token — never a person's: GitHub refuses to approve or request
-          changes on the token owner's own PRs. The job's `permissions:`
-          block does not narrow a PAT; the reviewer's allowlist is the only
-          scope on it.
+          Issues write) scoped to this one repository, or a GitHub App
+          installation token — never a person's: GitHub refuses to approve
+          or request changes on the token owner's own PRs, and the verdict
+          step dismisses that person's own hand-written approvals as if they
+          were its own. Nothing narrows a PAT: not the job's `permissions:`
+          block, and not the reviewer's allowlist, which matches command
+          prefixes and so admits `gh pr comment --repo <other>`. The
+          token's repository list is the blast radius of PR-controlled
+          content, so keep it to one repository.
         required: false
 
 # One review per PR. Rapid pushes previously started overlapping reviews that
