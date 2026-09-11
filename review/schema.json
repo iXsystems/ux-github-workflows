@@ -39,7 +39,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["required", "reasons"],
-      "description": "Whether a person must review this change before it merges, decided by the 'Does this need a human' section of review/rubric.md. Independent of findings: a clean change can still need one.",
+      "description": "Whether a person must review this change before it merges, decided by the Does-this-need-a-human section of review/rubric.md. Independent of findings: a clean change can still need one.",
       "properties": {
         "required": { "type": "boolean" },
         "reasons": {

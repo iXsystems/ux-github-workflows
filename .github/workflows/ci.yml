@@ -87,6 +87,16 @@ jobs:
       - name: Compact the schema the way the workflow does
         run: jq -c . review/schema.json > /dev/null
 
+      # claude_args wraps the compacted schema in single quotes, so one inside
+      # it ends the argument early: `--json-schema is not valid JSON:
+      # Unterminated string`, on every consumer at once (PR #14).
+      - name: Check the schema has no single quotes
+        run: |
+          if grep -n "'" review/schema.json; then
+            echo "::error::review/schema.json contains a single quote; claude_args single-quotes the schema, so this breaks --json-schema."
+            exit 1
+          fi
+
       - name: Check every tooling path the workflow references exists
         run: |
           missing=0
