@@ -107,10 +107,12 @@ on:
         default: false
       human-review-paths:
         description: >-
-          Newline-separated gitignore-style globs. A PR touching a matching
-          file always gets a "needs a human review" COMMENT, whatever the
-          reviewer decided. The floor under the reviewer's own judgement of
-          what needs a person.
+          Newline-separated globs: `*`, `**`, `?`, and a bare directory or
+          file name matching at any depth and covering everything beneath it.
+          No negation or root anchors; `#` lines are ignored. A PR touching a
+          matching file always gets a "needs a human review" COMMENT,
+          whatever the reviewer decided. The floor under the reviewer's own
+          judgement of what needs a person.
         type: string
         default: ''
       tooling-ref:
@@ -539,9 +541,10 @@ jobs:
       # on the PR is this step's decision alone and cannot disagree with the
       # check.
       - name: Submit the verdict
-        # always(): a review step that fails must not skip the gate, or a broken
-        # reviewer reads as a clean bill of health.
-        if: always()
+        # !cancelled(): a review step that fails must not skip the gate, or a
+        # broken reviewer reads as a clean bill of health — but this step posts
+        # a review that outlives the run, and a cancelled run must not.
+        if: ${{ !cancelled() }}
         env:
           FINDINGS: ${{ steps.review.outputs.structured_output }}
           # For naming the real cause when there is no output — a reviewer

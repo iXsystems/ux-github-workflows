@@ -39,7 +39,16 @@ const repo = env('GITHUB_REPOSITORY');
 const number = Number(env('PR_NUMBER'));
 const head = env('HEAD_SHA');
 const approveWhenClean = env('APPROVE_WHEN_CLEAN') === 'true';
-const humanReviewPaths = env('HUMAN_REVIEW_PATHS').split('\n').map((p) => p.trim()).filter(Boolean);
+const humanReviewPaths = env('HUMAN_REVIEW_PATHS')
+  .split('\n')
+  .map((p) => p.trim())
+  .filter((p) => p && !p.startsWith('#'));
+for (const p of humanReviewPaths) {
+  if (p.startsWith('!') || p.startsWith('/')) {
+    console.log(`::error::human-review-paths: \`${p}\` — negation and root anchors are not supported; see the input description.`);
+    process.exit(1);
+  }
+}
 
 const api = async (path, init) => {
   const res = await fetch(`https://api.github.com/repos/${repo}${path}`, {
@@ -150,9 +159,10 @@ for (const f of findings) {
 }
 
 /**
- * gitignore-style glob to regex: `**` crosses directories, `*` and `?` do
- * not, a pattern without a slash matches at any depth, and a match on a
- * directory covers everything beneath it, so `.github/` and `review` work.
+ * Glob to regex: `**` crosses directories, `*` and `?` do not, a pattern
+ * without a slash matches at any depth, and a match on a directory covers
+ * everything beneath it, so `.github/` and `review` work. That is the whole
+ * supported syntax; the parse above rejects the rest.
  */
 const globToRegExp = (pattern) => {
   const glob = pattern.replace(/\/+$/, '');
@@ -199,18 +209,27 @@ const submit = async (event, lines) => {
  * A COMMENT does not clear an earlier REQUEST_CHANGES by the same identity;
  * an APPROVE does. Own reviews are matched on the login of the review just
  * posted — no /user call, and never another bot's.
+ *
+ * Best effort: the verdict is already on the PR. Dismissal on a protected
+ * branch needs admin or a place on the dismiss list, and a refusal must not
+ * turn a clean review into a red check.
  */
 const dismissOwnChangesRequested = async (own) => {
-  const reviews = await paginate(`/pulls/${number}/reviews`);
-  const stale = reviews.filter(
-    (r) => r.state === 'CHANGES_REQUESTED' && r.id !== own.id && r.user?.login === own.user?.login
-  );
-  for (const r of stale) {
-    await api(`/pulls/${number}/reviews/${r.id}/dismissals`, {
-      method: 'PUT',
-      body: JSON.stringify({ message: `Superseded by the review of ${head.slice(0, 7)}.` }),
-    });
-    console.log(`Dismissed changes-requested review ${r.id}.`);
+  try {
+    const reviews = await paginate(`/pulls/${number}/reviews`);
+    const stale = reviews.filter(
+      (r) => r.state === 'CHANGES_REQUESTED' && r.id !== own.id && r.user?.login === own.user?.login
+    );
+    for (const r of stale) {
+      await api(`/pulls/${number}/reviews/${r.id}/dismissals`, {
+        method: 'PUT',
+        body: JSON.stringify({ message: `Superseded by the review of ${head.slice(0, 7)}.` }),
+      });
+      console.log(`Dismissed changes-requested review ${r.id}.`);
+    }
+  } catch (error) {
+    console.log(`::warning::could not dismiss the previous changes-requested review: ${escapeData(error.message)}`);
+    console.log('It still blocks the merge until someone dismisses it. On a protected branch the posting identity must be an admin or on the review-dismissal list.');
   }
 };
 

@@ -202,7 +202,7 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `fetch-depth` | `10` | Must cover the PR range |
 | `extra-allowed-tools` | `''` | Comma-separated permission rules appended to the reviewer's `--allowedTools`, e.g. `Bash(go vet:*)`. Empty by default on purpose: anything that executes repo code runs PR-controlled code next to the job's write token, so each repo opts in as its own recorded decision |
 | `approve-when-clean` | `false` | Submit an APPROVE review when nothing blocks and no human review is needed. Off, the same outcome is a COMMENT saying it would have approved — run that way first and watch the calls |
-| `human-review-paths` | `''` | Newline-separated gitignore-style globs. A PR touching a match always gets the needs-a-human COMMENT, whatever the reviewer decided |
+| `human-review-paths` | `''` | Newline-separated globs (`*`, `**`, `?`; a bare name matches at any depth and covers everything beneath it; no `!` or leading `/`; `#` lines ignored). A PR touching a match always gets the needs-a-human COMMENT, whatever the reviewer decided |
 | `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
 The secret is named, not inherited, because the repos call it different things
@@ -293,8 +293,10 @@ fuzziest judgement in the pipeline, and a path list does not depend on it.
 Nothing is submitted when the reviewer crashed, on purpose: a changes-requested
 review from a run that reviewed nothing would need a person to dismiss it.
 A COMMENT does not clear an earlier REQUEST_CHANGES by the same identity (an
-APPROVE does), so the script dismisses its own before commenting — which needs
-that identity to be allowed to dismiss under branch protection.
+APPROVE does), so after commenting the script dismisses its own. That is best
+effort: on a protected branch, dismissing needs admin or a place on the
+review-dismissal list, and a refusal is a warning in the log, not a red check —
+the stale request-changes then stays until a person dismisses it.
 
 Making the review count is branch protection, per repo:
 
