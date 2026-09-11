@@ -300,11 +300,13 @@ review from a run that reviewed nothing would need a person to dismiss it.
 The flip side: only a run that reaches the verdict clears a request-changes
 the workflow posted. A crashed run, or a PR labelled `skip-label` after a
 blocking round, leaves it standing until a person dismisses it in the PR.
-A COMMENT does not clear an earlier REQUEST_CHANGES by the same identity (an
-APPROVE does), so after commenting the script dismisses its own. That is best
-effort: on a protected branch, dismissing needs admin or a place on the
-review-dismissal list, and a refusal is a warning in the log, not a red check —
-the stale request-changes then stays until a person dismisses it.
+A COMMENT leaves the identity's earlier REQUEST_CHANGES or APPROVE in force,
+so after commenting the script dismisses its own of either kind: a stale
+block would hold the merge, and a stale approval would let a change the
+verdict just said needs a person merge without one. That is best effort: on a
+protected branch, dismissing needs admin or a place on the review-dismissal
+list, and a refusal is a warning in the log, not a red check — the stale
+review then stays until a person dismisses it.
 
 Making the review count is branch protection, per repo:
 
@@ -320,8 +322,7 @@ Making the review count is branch protection, per repo:
   approve pull requests* in the repository's (or organisation's) Actions
   settings, or APPROVE returns 422. A review the token cannot post is a
   warning in the log, never a change to the check: the score decides the
-  exit status, so a clean PR from a fork, where the job token is read-only,
-  stays green and simply gets no review.
+  exit status, so a clean PR stays green and simply gets no review.
 - **CODEOWNERS:** if *Require review from Code Owners* is on, the approval only
   satisfies it when the posting identity is a code owner.
 

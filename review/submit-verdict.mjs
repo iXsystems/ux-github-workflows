@@ -206,30 +206,32 @@ const submit = async (event, lines) => {
 };
 
 /**
- * A COMMENT does not clear an earlier REQUEST_CHANGES by the same identity;
- * an APPROVE does. Own reviews are matched on the login of the review just
- * posted — no /user call, and never another bot's.
+ * A COMMENT leaves the identity's earlier REQUEST_CHANGES or APPROVED in
+ * force, so on the COMMENT paths both are dismissed: a stale block would
+ * hold the merge, and a stale approval would let a change the verdict just
+ * said needs a person merge without one. Own reviews are matched on the
+ * login of the review just posted — no /user call, and never another bot's.
  *
  * Best effort: the verdict is already on the PR. Dismissal on a protected
  * branch needs admin or a place on the dismiss list, and a refusal must not
  * turn a clean review into a red check.
  */
-const dismissOwnChangesRequested = async (own) => {
+const dismissOwnStateReviews = async (own) => {
   try {
     const reviews = await paginate(`/pulls/${number}/reviews`);
     const stale = reviews.filter(
-      (r) => r.state === 'CHANGES_REQUESTED' && r.id !== own.id && r.user?.login === own.user?.login
+      (r) => ['CHANGES_REQUESTED', 'APPROVED'].includes(r.state) && r.id !== own.id && r.user?.login === own.user?.login
     );
     for (const r of stale) {
       await api(`/pulls/${number}/reviews/${r.id}/dismissals`, {
         method: 'PUT',
         body: JSON.stringify({ message: `Superseded by the review of ${head.slice(0, 7)}.` }),
       });
-      console.log(`Dismissed changes-requested review ${r.id}.`);
+      console.log(`Dismissed ${r.state.toLowerCase().replace('_', '-')} review ${r.id}.`);
     }
   } catch (error) {
-    console.log(`::warning::could not dismiss the previous changes-requested review: ${escapeData(error.message)}`);
-    console.log('It still blocks the merge until someone dismisses it. On a protected branch the posting identity must be an admin or on the review-dismissal list.');
+    console.log(`::warning::could not dismiss the previous review: ${escapeData(error.message)}`);
+    console.log('A changes-requested review still blocks the merge, and an approval still counts, until someone dismisses it. On a protected branch the posting identity must be an admin or on the review-dismissal list.');
   }
 };
 
@@ -266,7 +268,7 @@ try {
         '',
         ...(reasons.length ? reasons : ['The reviewer flagged this as needing a person but gave no reason.']).map((r) => `- ${r}`),
       ]);
-      await dismissOwnChangesRequested(own);
+      await dismissOwnStateReviews(own);
       console.log(`Human review required: ${reasons.length} reason(s).`);
     } else if (!approveWhenClean) {
       const own = await submit('COMMENT', [
@@ -274,7 +276,7 @@ try {
         '',
         'Nothing blocks and no human review is needed. Approval is off for this repository (`approve-when-clean`), so this is a comment.',
       ]);
-      await dismissOwnChangesRequested(own);
+      await dismissOwnStateReviews(own);
     } else {
       await submit('APPROVE', [
         `**Approved.** ${countLine}`,
@@ -285,8 +287,9 @@ try {
   }
 } catch (error) {
   // The exit status is the score's, decided above; a review the token could
-  // not post is the environment (a fork PR's read-only token, a setting),
-  // and must not make a clean PR red for good.
+  // not post is the environment (the Actions approve setting, a token whose
+  // owner authored the PR, a narrowed grant) and must not make a clean PR
+  // red for good.
   console.log(`::warning::could not submit the review: ${escapeData(error.message)}`);
   console.log('The check still reports the score below; only the PR review is missing.');
   if (/HTTP 422/.test(error.message)) {
