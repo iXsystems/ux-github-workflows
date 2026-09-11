@@ -92,12 +92,16 @@ try {
   // current. The token has `issues: write` over the whole repo, so that edit
   // succeeds.
   //
-  // `type === 'Bot'` rather than a login: the summary's author moves with
-  // whatever identity the action posts under, which has already been both
-  // github-actions[bot] and the Claude app.
+  // Matched on the login this run posts as, which is what `gh pr comment
+  // --edit-last` will rewrite. REVIEW_LOGIN is empty for a GitHub App token
+  // (no /user for those) and after a transient /user failure; the author
+  // type stands in. That finds an App's summary, can put a banner on
+  // another bot's, and finds nothing for a machine user, which is a missing
+  // banner: cosmetic either way.
+  const login = process.env.REVIEW_LOGIN;
   const summary = [...comments]
     .reverse()
-    .find((c) => c.user?.type === 'Bot' && MARKER.test(c.body ?? ''));
+    .find((c) => (login ? c.user?.login === login : c.user?.type === 'Bot') && MARKER.test(c.body ?? ''));
 
   if (!summary) {
     console.log('No previous review summary to mark; nothing to do.');

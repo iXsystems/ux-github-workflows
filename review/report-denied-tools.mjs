@@ -60,7 +60,7 @@ for (const m of messages) {
 
 if (denials.length === 0) bail('The reviewer was not denied any tool calls.');
 
-/** Model-written text; same escapes as check-review-threshold.mjs. */
+/** Model-written text; same escapes as submit-verdict.mjs. */
 const escapeData = (value) =>
   String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 

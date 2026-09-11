@@ -1,8 +1,8 @@
 name: Claude Review (shared)
 
-# Automatic PR review that produces a machine-readable result and fails the job
-# on anything at MEDIUM or above. Ported from truenas/api-client-ts, where it
-# was built and is in use.
+# Automatic PR review that produces a machine-readable result, fails the job
+# on anything at MEDIUM or above, and submits a PR review to match. Ported from
+# truenas/api-client-ts, where it was built and is in use.
 #
 # There is deliberately one review workflow here, not a choice of two. If this
 # turns out to be the wrong one, change it here and every caller moves together;
@@ -10,8 +10,11 @@ name: Claude Review (shared)
 #
 # What it does:
 #   - structured output against `review/schema.json`, scored by
-#     `review/check-review-threshold.mjs`, so the review is a check and not
-#     only a comment;
+#     `review/submit-verdict.mjs`, so the review is a check and not only a
+#     comment;
+#   - a PR review submitted from that score: REQUEST_CHANGES on a blocking
+#     finding, COMMENT when the change needs a person, APPROVE when it is
+#     clean and the caller has turned approval on;
 #   - the severity rubric the gate scores, in `review/rubric.md`, appended to
 #     the caller's own prompt file;
 #   - inline comments on the lines they are about, plus one edited-in-place
@@ -23,8 +26,9 @@ name: Claude Review (shared)
 #     flight, so a stale "nothing blocking" cannot be read as current.
 #
 # A repo must not also run its own inline Claude review on the same PR. Both
-# post as github-actions[bot], and this one's `gh pr comment --edit-last` would
-# edit whichever summary that bot wrote last — including the other one's.
+# post as the same identity by default, and this one's `gh pr comment
+# --edit-last` would edit whichever summary that identity wrote last —
+# including the other one's.
 #
 # Callers own their `on:` trigger — branch filters and paths-ignore differ per
 # repo and cannot be passed as inputs, since `workflow_call` has no say in what
@@ -43,9 +47,12 @@ name: Claude Review (shared)
 #         # let the API key stand in wherever the token has not been granted.
 #         claude-code-oauth-token: ${{ secrets.UX_CLAUDE_CODE_OAUTH_TOKEN }}
 #         anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+#         # Optional: post comments and the review as this identity.
+#         github-token: ${{ secrets.UX_REVIEW_BOT_TOKEN }}
 #
-# The job fails on a blocking finding. Whether that stops a merge is branch
-# protection's decision, made per repo, and reversible without touching this.
+# The job fails on a blocking finding. Whether that, or the submitted review,
+# stops a merge is branch protection's decision, made per repo, and reversible
+# without touching this.
 
 on:
   workflow_call:
@@ -70,6 +77,8 @@ on:
           PR label that suppresses the review. Note that skipping means the
           gate does not run either, so this is a way to bypass a red check
           without branch protection recording it — restrict who can apply it.
+          It does not clear a changes-requested review an earlier run posted:
+          nothing runs to dismiss it, so a person does that in the PR.
         type: string
         default: 'skip-claude'
       timeout-minutes:
@@ -85,7 +94,31 @@ on:
           Comma-separated permission rules appended to --allowedTools, for
           repo-specific needs like `Bash(go vet:*)`. Anything that executes
           repo code (make, go generate, package scripts) runs PR-controlled
-          code next to this job's write token — allow that knowingly.
+          code next to this job's write token — or the github-token secret,
+          which reaches every repository it was granted — allow that
+          knowingly.
+        type: string
+        default: ''
+      approve-when-clean:
+        description: >-
+          Submit an APPROVE review when nothing blocks and no human review is
+          needed. Set false to get a COMMENT saying it would have approved
+          instead, for a repo that wants to watch the calls before letting
+          them count towards required approvals. With the job token this
+          also needs "Allow GitHub Actions to create and approve pull
+          requests" in the repository's Actions settings.
+        type: boolean
+        default: true
+      human-review-paths:
+        description: >-
+          Newline-separated globs with gitignore rules: `*`, `**`, `?`; a
+          name with no slash (a trailing one does not count) matches at any
+          depth; one with a slash is anchored at the repository root; a
+          directory match covers everything beneath it. No negation,
+          leading `/`, brackets or braces; `#` lines are ignored. A PR touching a
+          matching file always gets a "needs a human review" COMMENT,
+          whatever the reviewer decided. The floor under the reviewer's own
+          judgement of what needs a person.
         type: string
         default: ''
       tooling-ref:
@@ -113,6 +146,21 @@ on:
           exists and API billing wherever it does not, with no migration step
           between granting the secret and using it. A step fails the job when
           neither is set.
+        required: false
+      github-token:
+        description: >-
+          Token to post comments and the review as. Empty means the job's own
+          token, so everything comes from github-actions[bot]. Use a machine
+          account's fine-grained PAT (Contents read, Pull requests write,
+          Issues write) scoped to this one repository, or a GitHub App
+          installation token — never a person's: GitHub refuses to approve
+          or request changes on the token owner's own PRs, and a review
+          posted as a person reads as that person's judgement. Nothing
+          narrows a PAT: not the job's `permissions:`
+          block, and not the reviewer's allowlist, which matches command
+          prefixes and so admits `gh pr comment --repo <other>`. The
+          token's repository list is the blast radius of PR-controlled
+          content, so keep it to one repository.
         required: false
 
 # One review per PR. Rapid pushes previously started overlapping reviews that
@@ -234,6 +282,42 @@ jobs:
             echo "Authenticating with anthropic-api-key (API billing)."
           fi
 
+      # The stale-marker script finds its own previous summary by author. A
+      # GitHub App installation token (`ghs_`) cannot call /user, so the login
+      # is left empty and that script matches on author type instead. Any
+      # other token that cannot answer /user is broken, and fails here rather
+      # than at the first post.
+      #
+      # The token expression is repeated per step rather than set job-wide,
+      # so checkout, the schema compact and the thread collection never see
+      # a PAT. The review step itself must carry it, so the reviewer's
+      # allowlist stays the only scope on it there. `||` because an unmapped
+      # or ungranted secret arrives as the empty string.
+      - name: Resolve the posting identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ secrets.github-token || github.token }}
+          CUSTOM_TOKEN: ${{ secrets.github-token != '' }}
+        run: |
+          if [ "$CUSTOM_TOKEN" != 'true' ]; then
+            login='github-actions[bot]'
+          elif [ "${GH_TOKEN#ghs_}" != "$GH_TOKEN" ]; then
+            login=''
+          elif ! out=$(gh api user --jq .login 2>&1); then
+            # A rejected token is fatal; a blip is not, the login only feeds
+            # the stale banner.
+            if grep -qE 'HTTP 40[13]' <<<"$out"; then
+              echo "::error::github-token is rejected by /user: $out"
+              exit 1
+            fi
+            echo "::warning::could not resolve the posting identity ($out); the stale banner may not be applied."
+            login=''
+          else
+            login=$out
+          fi
+          echo "login=$login" >> "$GITHUB_OUTPUT"
+          echo "Posting as ${login:-a GitHub App (login unavailable)}."
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -313,7 +397,8 @@ jobs:
       # one finishes. Say so on it, rather than letting it read as current.
       - name: Mark the previous review stale
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.github-token || github.token }}
+          REVIEW_LOGIN: ${{ steps.identity.outputs.login }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -362,12 +447,13 @@ jobs:
           # `id-token: write`, and it is deliberately not in the permissions
           # block above — nothing here mints an OIDC token.
           #
-          # Two consequences. Comments come from github-actions[bot] rather than
-          # the Claude app, which is what `mark-review-stale.mjs` already edits
-          # with. And on a pull_request from a fork GITHUB_TOKEN is read-only,
-          # so posting would fail there — `require-write-access` already skips
-          # those, but a write-access author working from a fork is the gap.
-          github_token: ${{ github.token }}
+          # One consequence: comments come from github-actions[bot] — or the
+          # caller's github-token — rather than the Claude app, which is the
+          # identity `mark-review-stale.mjs` edits as. (A fork PR is not a
+          # gap here: on `pull_request` it gets no secrets, so the auth check
+          # above stops it before this step, unless the repo sends secrets to
+          # fork PRs — then GITHUB_TOKEN is read-only and posting fails.)
+          github_token: ${{ secrets.github-token || github.token }}
           # No track_progress: it forces tag mode, which overrides allowedTools
           # with a fixed list that cannot emit structured output, so
           # --json-schema hangs. Agent mode passes tools through but posts
@@ -470,14 +556,25 @@ jobs:
           retention-days: 5
           if-no-files-found: ignore
 
-      - name: Enforce review threshold
-        # always(): a review step that fails must not skip the gate, or a broken
-        # reviewer reads as a clean bill of health.
-        if: always()
+      # Scores the output, submits the matching PR review, and fails the job
+      # at MEDIUM and above. The reviewer has no `gh pr review`, so the review
+      # on the PR is this step's decision alone and cannot disagree with the
+      # check.
+      - name: Submit the verdict
+        # !cancelled(): a review step that fails must not skip the gate, or a
+        # broken reviewer reads as a clean bill of health — but this step posts
+        # a review that outlives the run, and a cancelled run must not.
+        if: ${{ !cancelled() }}
         env:
           FINDINGS: ${{ steps.review.outputs.structured_output }}
           # For naming the real cause when there is no output — a reviewer
           # killed by an API error (usage limit, expired key) says so in the
           # execution log's result entry.
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
-        run: node .claude-review/tooling/review/check-review-threshold.mjs
+          GH_TOKEN: ${{ secrets.github-token || github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          APPROVE_WHEN_CLEAN: ${{ inputs.approve-when-clean }}
+          HUMAN_REVIEW_PATHS: ${{ inputs.human-review-paths }}
+        run: node .claude-review/tooling/review/submit-verdict.mjs

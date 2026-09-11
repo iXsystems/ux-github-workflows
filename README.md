@@ -156,6 +156,8 @@ Automatic PR review, and the only one published here. It replaces the inline
 | Severities | whatever the prompt asks for | fixed enum, enforced by a JSON schema |
 | Knows what it said last round | no | yes — prior threads and their resolved state |
 | Marks its own comment stale | no | yes, while a new review is in flight |
+| Submits a PR review | no | yes — request changes, needs-a-human comment, or approve |
+| Posts as | `github-actions[bot]` | `github-actions[bot]`, or a token the caller passes |
 | Mode | tag mode (`track_progress`) | agent mode |
 | Action version | drifted to three different pins | one, bumped here for everyone |
 
@@ -181,6 +183,8 @@ jobs:
       # Subscription auth, preferred when set. Map both: see below.
       claude-code-oauth-token: ${{ secrets.UX_CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
+      # Optional: post as a machine account instead of github-actions[bot].
+      github-token: ${{ secrets.UX_REVIEW_BOT_TOKEN }}
 ```
 
 No `id-token: write`: nothing here mints an OIDC token, because the workflow
@@ -193,10 +197,12 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `model` | `claude-opus-5` | Passed through `claude_args` |
 | `prompt-file` | `.claude/review-prompt.md` | The repo's own guidelines |
 | `require-write-access` | `true` | Calls `check-member.yml`. Keep it on — it is what stops a drive-by PR spending tokens |
-| `skip-label` | `skip-claude` | |
+| `skip-label` | `skip-claude` | Skips the review and the gate. Does not clear a changes-requested review an earlier run posted; a person dismisses that in the PR |
 | `timeout-minutes` | `20` | |
 | `fetch-depth` | `10` | Must cover the PR range |
 | `extra-allowed-tools` | `''` | Comma-separated permission rules appended to the reviewer's `--allowedTools`, e.g. `Bash(go vet:*)`. Empty by default on purpose: anything that executes repo code runs PR-controlled code next to the job's write token, so each repo opts in as its own recorded decision |
+| `approve-when-clean` | `true` | Submit an APPROVE review when nothing blocks and no human review is needed. Set `false` to get a COMMENT saying it would have approved instead, to watch the calls before they count |
+| `human-review-paths` | `''` | Newline-separated globs, gitignore rules: `*`, `**`, `?`; a name with no slash (trailing one aside) matches at any depth, one with a slash is root-anchored, a directory match covers everything beneath it; no `!`, leading `/`, brackets or braces; `#` lines ignored. A PR touching a match always gets the needs-a-human COMMENT, whatever the reviewer decided |
 | `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
 The secret is named, not inherited, because the repos call it different things
@@ -229,27 +235,108 @@ Rotating the token before it expires, and watching the subscription's limit,
 are what cover those. The job log names which credential it chose —
 `Authenticating with …` — so a run that broke this way says so in its first
 step, and the gate reports the API error rather than a clean review, since
-`check-review-threshold.mjs` reads the execution log when there is no
+`submit-verdict.mjs` reads the execution log when there is no
 structured output. The `anthropics/claude-code-action`
 version is hardcoded rather than an input: `uses:` does not evaluate
 expressions, and a configurable version is how the consumers ended up on
 v1.0.182, v1.0.154 and v1.0.134 in the first place. Bump it here and every
 caller moves.
 
+**`github-token` is optional and changes who posts.** Left empty, comments and
+the review come from `github-actions[bot]` under the job's `permissions:`
+block. Set, they come from that token's identity. Use a machine account's
+fine-grained PAT (Contents read, Pull requests write, Issues write) **scoped
+to the one repository**, or a GitHub App installation token, and **not a
+person's token**: GitHub refuses to approve or request changes on the token
+owner's own PRs, so every PR that person opens would be un-gateable, and an
+approval posted as a person reads as that person's judgement rather than a
+check's. (The script dismisses only reviews carrying its own body marker, so
+a person's hand-written reviews are never touched.)
+
+Nothing narrows a PAT. The job's `permissions:` block does not apply to it,
+and the reviewer's allowlist is a list of command prefixes, not a repository
+boundary: `gh pr comment 42 --repo other/repo` is inside `Bash(gh pr
+comment:*)`. The reviewer processes PR-controlled content, so the PAT's
+repository list is exactly how far an injection can write. One token per
+repository keeps that to the repository under review. A machine account's
+approval counts towards required approvals like any user's, and needs no
+Actions setting; `github-actions[bot]`'s needs one (below).
+
 **A repo must not keep its own inline review running alongside this.** Both
-post as `github-actions[bot]`, and this one's `gh pr comment --edit-last` edits
-the last comment *that bot* wrote — which, with an inline review also running,
-may be its sticky comment. The `concurrency` groups are distinct, so nothing
+post as the same identity by default, and this one's `gh pr comment
+--edit-last` edits the last comment *that identity* wrote — which, with an
+inline review also running, may be its sticky comment. The `concurrency` groups are distinct, so nothing
 cancels anything; the collision is over the comment, not the runner. Migrating
 means replacing `claude.yml`'s contents, not adding a second workflow file.
 
 #### What this needs from the repo
 
-The review's structured output is scored by `review/check-review-threshold.mjs`
+The review's structured output is scored by `review/submit-verdict.mjs`
 against `review/schema.json`: **MEDIUM, HIGH and BLOCKER fail the job**, LOW does
 not, and a review that produced no parseable output fails too — a reviewer that
 crashed must not read as a reviewer that found nothing. Findings are emitted as
 workflow annotations, so they land on the diff in the Files tab.
+
+The same script submits one PR review from that score. The reviewer itself has
+no `gh pr review`, so the review on the PR is the script's decision alone and
+cannot disagree with the check:
+
+| Result | Review submitted | Job |
+|---|---|---|
+| Anything at MEDIUM or above | REQUEST_CHANGES | fails |
+| Only LOW or none, a human must look | COMMENT listing the reasons | passes, no approval |
+| Only LOW or none, `approve-when-clean` off | COMMENT "would approve" | passes |
+| Only LOW or none, `approve-when-clean` on | APPROVE | passes |
+| No or unparseable output | nothing | fails |
+
+"A human must look" is the reviewer's own answer to the *Does this need a
+human?* section of `review/rubric.md` — public API or exported type changes, a
+new or major-bumped dependency, CI, release or auth changes, user-facing
+behaviour, wording or default changes, removed tests, data migrations, anything
+the PR presents as a decision — plus `human-review-paths`, which forces it for
+any PR touching a matching file regardless of what the reviewer said. That
+input is the floor: the model's call on "is this a product decision" is the
+fuzziest judgement in the pipeline, and a path list does not depend on it.
+
+Each run adds a review; GitHub reviews are appended, not edited, so a PR with
+ten pushes carries ten of them, and the newest is the one that describes the
+head commit. REQUEST_CHANGES and APPROVE change the PR's state; the two
+COMMENT outcomes do not.
+
+Nothing is submitted when the reviewer crashed, on purpose: a changes-requested
+review from a run that reviewed nothing would need a person to dismiss it.
+The flip side: only a run that reaches the verdict clears a request-changes
+the workflow posted. A crashed run, or a PR labelled `skip-label` after a
+blocking round, leaves it standing until a person dismisses it in the PR.
+A COMMENT leaves the identity's earlier REQUEST_CHANGES or APPROVE in force,
+so after commenting the script dismisses its own of either kind — its own
+meaning posted by the same login *and* carrying this script's body marker, so
+another workflow's approval under the shared `github-actions[bot]` is left
+alone: a stale
+block would hold the merge, and a stale approval would let a change the
+verdict just said needs a person merge without one. That is best effort: on a
+protected branch, dismissing needs admin or a place on the review-dismissal
+list, and a refusal is a warning in the log, not a red check — the stale
+review then stays until a person dismisses it.
+
+Making the review count is branch protection, per repo:
+
+- **Require 1 approval** and mark `Automatic PR review` required. The
+  workflow's approval satisfies the first, which is the whole mechanism and the
+  whole risk: a PR the reviewer misjudges as routine merges with no person
+  involved. A repo that wants to see the calls first can set
+  `approve-when-clean: false`, read the "would approve" comments for a while,
+  and drop the line once they look right.
+- **Dismiss stale pull request approvals when new commits are pushed.**
+  Without it an approval of one commit still counts while the next is being
+  re-reviewed, and `cancel-in-progress` makes that window real.
+- **With the job token only:** enable *Allow GitHub Actions to create and
+  approve pull requests* in the repository's (or organisation's) Actions
+  settings, or APPROVE returns 422. A review the token cannot post is a
+  warning in the log, never a change to the check: the score decides the
+  exit status, so a clean PR stays green and simply gets no review.
+- **CODEOWNERS:** if *Require review from Code Owners* is on, the approval only
+  satisfies it when the posting identity is a code owner.
 
 **Why this passes `github_token` explicitly.** Left unset, the action exchanges
 its OIDC token for an Anthropic GitHub App token, and that exchange refuses when
@@ -270,10 +357,10 @@ migration PR in every repo showed a red `Automatic PR review`.
 Passing `github_token: ${{ github.token }}` makes `setupGitHubToken` return
 early, so the exchange never happens. GitHub has already scoped that token to
 the job's `permissions:` block, which is where the equivalent restriction
-belongs. The costs: comments come from `github-actions[bot]` rather than the
-Claude app, and on a `pull_request` from a fork `GITHUB_TOKEN` is read-only, so
-posting would fail — `require-write-access` skips those anyway, leaving only a
-write-access author working from a fork as the real gap.
+belongs. The cost: comments come from `github-actions[bot]` rather than the
+Claude app. A `pull_request` from a fork is not a gap: it gets no secrets, so
+the auth check stops it before anything posts — unless the repo sends secrets
+to fork PRs, in which case `GITHUB_TOKEN` is read-only there and posting fails.
 
 Whether a failed job blocks a merge is branch protection, set per repo. That is
 the reversible half of the decision, and adopting this workflow does not make it
