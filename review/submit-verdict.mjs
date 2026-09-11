@@ -25,6 +25,10 @@
 import { readFileSync } from 'node:fs';
 
 const BLOCKING = new Set(['BLOCKER', 'HIGH', 'MEDIUM']);
+// In every review this script posts, so "mine" can mean this workflow's and
+// not merely this login's: github-actions[bot] is shared with every other
+// workflow that reviews under GITHUB_TOKEN.
+const MARKER = '<!-- claude-review-verdict -->';
 
 // Workflow commands are line-oriented and every field is model-written, so a
 // newline or `::` in a summary would otherwise write the log rather than
@@ -44,8 +48,8 @@ const humanReviewPaths = env('HUMAN_REVIEW_PATHS')
   .map((p) => p.trim())
   .filter((p) => p && !p.startsWith('#'));
 for (const p of humanReviewPaths) {
-  if (p.startsWith('!') || p.startsWith('/')) {
-    console.log(`::error::human-review-paths: \`${p}\` — negation and root anchors are not supported; see the input description.`);
+  if (p.startsWith('!') || p.startsWith('/') || /[[\]{}]/.test(p)) {
+    console.log(`::error::human-review-paths: \`${p}\` — negation, a leading slash, brackets and braces are not supported; see the input description.`);
     process.exit(1);
   }
 }
@@ -201,7 +205,7 @@ const pathReasons = async () => {
 const submit = async (event, lines) => {
   const review = await api(`/pulls/${number}/reviews`, {
     method: 'POST',
-    body: JSON.stringify({ commit_id: head, event, body: lines.join('\n') }),
+    body: JSON.stringify({ commit_id: head, event, body: [...lines, '', MARKER].join('\n') }),
   });
   console.log(`Submitted a ${event} review for ${head.slice(0, 7)} as ${review.user?.login}.`);
   return review;
@@ -212,7 +216,8 @@ const submit = async (event, lines) => {
  * force, so on the COMMENT paths both are dismissed: a stale block would
  * hold the merge, and a stale approval would let a change the verdict just
  * said needs a person merge without one. Own reviews are matched on the
- * login of the review just posted — no /user call, and never another bot's.
+ * login of the review just posted plus the body marker — no /user call, and
+ * never another workflow's review under the same login.
  *
  * Best effort: the verdict is already on the PR. Dismissal on a protected
  * branch needs admin or a place on the dismiss list, and a refusal must not
@@ -222,7 +227,11 @@ const dismissOwnStateReviews = async (own) => {
   try {
     const reviews = await paginate(`/pulls/${number}/reviews`);
     const stale = reviews.filter(
-      (r) => ['CHANGES_REQUESTED', 'APPROVED'].includes(r.state) && r.id !== own.id && r.user?.login === own.user?.login
+      (r) =>
+        ['CHANGES_REQUESTED', 'APPROVED'].includes(r.state) &&
+        r.id !== own.id &&
+        r.user?.login === own.user?.login &&
+        (r.body ?? '').includes(MARKER)
     );
     for (const r of stale) {
       await api(`/pulls/${number}/reviews/${r.id}/dismissals`, {

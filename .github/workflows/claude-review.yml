@@ -114,8 +114,8 @@ on:
           Newline-separated globs with gitignore rules: `*`, `**`, `?`; a
           name with no slash (a trailing one does not count) matches at any
           depth; one with a slash is anchored at the repository root; a
-          directory match covers everything beneath it. No negation or
-          leading `/`; `#` lines are ignored. A PR touching a
+          directory match covers everything beneath it. No negation,
+          leading `/`, brackets or braces; `#` lines are ignored. A PR touching a
           matching file always gets a "needs a human review" COMMENT,
           whatever the reviewer decided. The floor under the reviewer's own
           judgement of what needs a person.

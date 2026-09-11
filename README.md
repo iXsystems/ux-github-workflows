@@ -202,7 +202,7 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `fetch-depth` | `10` | Must cover the PR range |
 | `extra-allowed-tools` | `''` | Comma-separated permission rules appended to the reviewer's `--allowedTools`, e.g. `Bash(go vet:*)`. Empty by default on purpose: anything that executes repo code runs PR-controlled code next to the job's write token, so each repo opts in as its own recorded decision |
 | `approve-when-clean` | `false` | Submit an APPROVE review when nothing blocks and no human review is needed. Off, the same outcome is a COMMENT saying it would have approved — run that way first and watch the calls |
-| `human-review-paths` | `''` | Newline-separated globs, gitignore rules: `*`, `**`, `?`; a name with no slash (trailing one aside) matches at any depth, one with a slash is root-anchored, a directory match covers everything beneath it; no `!` or leading `/`; `#` lines ignored. A PR touching a match always gets the needs-a-human COMMENT, whatever the reviewer decided |
+| `human-review-paths` | `''` | Newline-separated globs, gitignore rules: `*`, `**`, `?`; a name with no slash (trailing one aside) matches at any depth, one with a slash is root-anchored, a directory match covers everything beneath it; no `!`, leading `/`, brackets or braces; `#` lines ignored. A PR touching a match always gets the needs-a-human COMMENT, whatever the reviewer decided |
 | `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
 The secret is named, not inherited, because the repos call it different things
@@ -309,7 +309,10 @@ The flip side: only a run that reaches the verdict clears a request-changes
 the workflow posted. A crashed run, or a PR labelled `skip-label` after a
 blocking round, leaves it standing until a person dismisses it in the PR.
 A COMMENT leaves the identity's earlier REQUEST_CHANGES or APPROVE in force,
-so after commenting the script dismisses its own of either kind: a stale
+so after commenting the script dismisses its own of either kind — its own
+meaning posted by the same login *and* carrying this script's body marker, so
+another workflow's approval under the shared `github-actions[bot]` is left
+alone: a stale
 block would hold the merge, and a stale approval would let a change the
 verdict just said needs a person merge without one. That is best effort: on a
 protected branch, dismissing needs admin or a place on the review-dismissal
