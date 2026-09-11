@@ -159,10 +159,12 @@ for (const f of findings) {
 }
 
 /**
- * Glob to regex: `**` crosses directories, `*` and `?` do not, a pattern
- * without a slash matches at any depth, and a match on a directory covers
- * everything beneath it, so `.github/` and `review` work. That is the whole
- * supported syntax; the parse above rejects the rest.
+ * Glob to regex, gitignore rules: `**` crosses directories, `*` and `?` do
+ * not; a trailing slash is only a directory marker, and a pattern with no
+ * other slash matches at any depth; a match on a directory covers everything
+ * beneath it. So `migrations/` and `migrations` are the same pattern, and
+ * `db/migrations` is anchored at the root. That is the whole supported
+ * syntax; the parse above rejects the rest.
  */
 const globToRegExp = (pattern) => {
   const glob = pattern.replace(/\/+$/, '');
@@ -177,7 +179,7 @@ const globToRegExp = (pattern) => {
     else if (c === '?') re += '[^/]';
     else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
-  return new RegExp(`^${pattern.includes('/') ? '' : '(?:.*/)?'}${re}(?:/.*)?$`);
+  return new RegExp(`^${glob.includes('/') ? '' : '(?:.*/)?'}${re}(?:/.*)?$`);
 };
 
 /** Paths the caller listed as always needing a person, matched against the PR's files. */

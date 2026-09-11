@@ -109,9 +109,11 @@ on:
         default: false
       human-review-paths:
         description: >-
-          Newline-separated globs: `*`, `**`, `?`, and a bare directory or
-          file name matching at any depth and covering everything beneath it.
-          No negation or root anchors; `#` lines are ignored. A PR touching a
+          Newline-separated globs with gitignore rules: `*`, `**`, `?`; a
+          name with no slash (a trailing one does not count) matches at any
+          depth; one with a slash is anchored at the repository root; a
+          directory match covers everything beneath it. No negation or
+          leading `/`; `#` lines are ignored. A PR touching a
           matching file always gets a "needs a human review" COMMENT,
           whatever the reviewer decided. The floor under the reviewer's own
           judgement of what needs a person.
@@ -295,9 +297,17 @@ jobs:
             login='github-actions[bot]'
           elif [ "${GH_TOKEN#ghs_}" != "$GH_TOKEN" ]; then
             login=''
-          elif ! login=$(gh api user --jq .login); then
-            echo "::error::github-token cannot call /user; it is not a usable PAT."
-            exit 1
+          elif ! out=$(gh api user --jq .login 2>&1); then
+            # A rejected token is fatal; a blip is not, the login only feeds
+            # the stale banner.
+            if grep -qE 'HTTP 40[13]' <<<"$out"; then
+              echo "::error::github-token is rejected by /user: $out"
+              exit 1
+            fi
+            echo "::warning::could not resolve the posting identity ($out); the stale banner may not be applied."
+            login=''
+          else
+            login=$out
           fi
           echo "login=$login" >> "$GITHUB_OUTPUT"
           echo "Posting as ${login:-a GitHub App (login unavailable)}."
@@ -431,12 +441,12 @@ jobs:
           # `id-token: write`, and it is deliberately not in the permissions
           # block above — nothing here mints an OIDC token.
           #
-          # Two consequences. Comments come from github-actions[bot] — or the
+          # One consequence: comments come from github-actions[bot] — or the
           # caller's github-token — rather than the Claude app, which is the
-          # identity `mark-review-stale.mjs` edits as. And on a pull_request
-          # from a fork GITHUB_TOKEN is read-only, so posting would fail there
-          # — `require-write-access` already skips those, but a write-access
-          # author working from a fork is the gap.
+          # identity `mark-review-stale.mjs` edits as. (A fork PR is not a
+          # gap here: on `pull_request` it gets no secrets, so the auth check
+          # above stops it before this step, unless the repo sends secrets to
+          # fork PRs — then GITHUB_TOKEN is read-only and posting fails.)
           github_token: ${{ secrets.github-token || github.token }}
           # No track_progress: it forces tag mode, which overrides allowedTools
           # with a fixed list that cannot emit structured output, so
