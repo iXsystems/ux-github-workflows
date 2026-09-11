@@ -77,6 +77,8 @@ on:
           PR label that suppresses the review. Note that skipping means the
           gate does not run either, so this is a way to bypass a red check
           without branch protection recording it — restrict who can apply it.
+          It does not clear a changes-requested review an earlier run posted:
+          nothing runs to dismiss it, so a person does that in the PR.
         type: string
         default: 'skip-claude'
       timeout-minutes:
@@ -211,10 +213,6 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    env:
-      # The identity everything on the PR is posted as. `||` because an
-      # unmapped or ungranted secret arrives as the empty string.
-      REVIEW_GH_TOKEN: ${{ secrets.github-token || github.token }}
     steps:
       # This job runs with a write token and the caller's API key, against PR
       # content. That is only safe on `pull_request`, where a fork PR gets a
@@ -281,10 +279,15 @@ jobs:
       # is left empty and that script matches on author type instead. Any
       # other token that cannot answer /user is broken, and fails here rather
       # than at the first post.
+      #
+      # The token expression is repeated per step rather than set job-wide,
+      # so only the steps that post carry it; `extra-allowed-tools` can run
+      # PR-controlled code, which must not inherit a PAT. `||` because an
+      # unmapped or ungranted secret arrives as the empty string.
       - name: Resolve the posting identity
         id: identity
         env:
-          GH_TOKEN: ${{ env.REVIEW_GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.github-token || github.token }}
           CUSTOM_TOKEN: ${{ secrets.github-token != '' }}
         run: |
           if [ "$CUSTOM_TOKEN" != 'true' ]; then
@@ -377,7 +380,7 @@ jobs:
       # one finishes. Say so on it, rather than letting it read as current.
       - name: Mark the previous review stale
         env:
-          GH_TOKEN: ${{ env.REVIEW_GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.github-token || github.token }}
           REVIEW_LOGIN: ${{ steps.identity.outputs.login }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -433,7 +436,7 @@ jobs:
           # from a fork GITHUB_TOKEN is read-only, so posting would fail there
           # — `require-write-access` already skips those, but a write-access
           # author working from a fork is the gap.
-          github_token: ${{ env.REVIEW_GH_TOKEN }}
+          github_token: ${{ secrets.github-token || github.token }}
           # No track_progress: it forces tag mode, which overrides allowedTools
           # with a fixed list that cannot emit structured output, so
           # --json-schema hangs. Agent mode passes tools through but posts
@@ -551,7 +554,7 @@ jobs:
           # killed by an API error (usage limit, expired key) says so in the
           # execution log's result entry.
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
-          GH_TOKEN: ${{ env.REVIEW_GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.github-token || github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

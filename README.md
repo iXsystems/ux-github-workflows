@@ -197,7 +197,7 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `model` | `claude-opus-5` | Passed through `claude_args` |
 | `prompt-file` | `.claude/review-prompt.md` | The repo's own guidelines |
 | `require-write-access` | `true` | Calls `check-member.yml`. Keep it on — it is what stops a drive-by PR spending tokens |
-| `skip-label` | `skip-claude` | |
+| `skip-label` | `skip-claude` | Skips the review and the gate. Does not clear a changes-requested review an earlier run posted; a person dismisses that in the PR |
 | `timeout-minutes` | `20` | |
 | `fetch-depth` | `10` | Must cover the PR range |
 | `extra-allowed-tools` | `''` | Comma-separated permission rules appended to the reviewer's `--allowedTools`, e.g. `Bash(go vet:*)`. Empty by default on purpose: anything that executes repo code runs PR-controlled code next to the job's write token, so each repo opts in as its own recorded decision |
@@ -290,8 +290,16 @@ any PR touching a matching file regardless of what the reviewer said. That
 input is the floor: the model's call on "is this a product decision" is the
 fuzziest judgement in the pipeline, and a path list does not depend on it.
 
+Each run adds a review; GitHub reviews are appended, not edited, so a PR with
+ten pushes carries ten of them, and the newest is the one that describes the
+head commit. REQUEST_CHANGES and APPROVE change the PR's state; the two
+COMMENT outcomes do not.
+
 Nothing is submitted when the reviewer crashed, on purpose: a changes-requested
 review from a run that reviewed nothing would need a person to dismiss it.
+The flip side: only a run that reaches the verdict clears a request-changes
+the workflow posted. A crashed run, or a PR labelled `skip-label` after a
+blocking round, leaves it standing until a person dismisses it in the PR.
 A COMMENT does not clear an earlier REQUEST_CHANGES by the same identity (an
 APPROVE does), so after commenting the script dismisses its own. That is best
 effort: on a protected branch, dismissing needs admin or a place on the
