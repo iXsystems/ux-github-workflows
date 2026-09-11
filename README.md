@@ -318,7 +318,10 @@ Making the review count is branch protection, per repo:
   re-reviewed, and `cancel-in-progress` makes that window real.
 - **With the job token only:** enable *Allow GitHub Actions to create and
   approve pull requests* in the repository's (or organisation's) Actions
-  settings, or APPROVE returns 422 and the job fails saying so.
+  settings, or APPROVE returns 422. A review the token cannot post is a
+  warning in the log, never a change to the check: the score decides the
+  exit status, so a clean PR from a fork, where the job token is read-only,
+  stays green and simply gets no review.
 - **CODEOWNERS:** if *Require review from Code Owners* is on, the approval only
   satisfies it when the posting identity is a code owner.
 

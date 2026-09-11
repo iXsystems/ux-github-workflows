@@ -281,9 +281,10 @@ jobs:
       # than at the first post.
       #
       # The token expression is repeated per step rather than set job-wide,
-      # so only the steps that post carry it; `extra-allowed-tools` can run
-      # PR-controlled code, which must not inherit a PAT. `||` because an
-      # unmapped or ungranted secret arrives as the empty string.
+      # so checkout, the schema compact and the thread collection never see
+      # a PAT. The review step itself must carry it, so the reviewer's
+      # allowlist stays the only scope on it there. `||` because an unmapped
+      # or ungranted secret arrives as the empty string.
       - name: Resolve the posting identity
         id: identity
         env:

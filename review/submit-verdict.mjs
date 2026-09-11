@@ -177,7 +177,7 @@ const globToRegExp = (pattern) => {
     else if (c === '?') re += '[^/]';
     else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
-  return new RegExp(`^${glob.includes('/') ? '' : '(?:.*/)?'}${re}(?:/.*)?$`);
+  return new RegExp(`^${pattern.includes('/') ? '' : '(?:.*/)?'}${re}(?:/.*)?$`);
 };
 
 /** Paths the caller listed as always needing a person, matched against the PR's files. */
@@ -284,7 +284,11 @@ try {
     }
   }
 } catch (error) {
-  console.log(`::error::could not submit the review: ${escapeData(error.message)}`);
+  // The exit status is the score's, decided above; a review the token could
+  // not post is the environment (a fork PR's read-only token, a setting),
+  // and must not make a clean PR red for good.
+  console.log(`::warning::could not submit the review: ${escapeData(error.message)}`);
+  console.log('The check still reports the score below; only the PR review is missing.');
   if (/HTTP 422/.test(error.message)) {
     console.log(
       'HTTP 422 on a review is usually one of two things: the job token is not allowed to ' +
@@ -294,7 +298,6 @@ try {
       'changes on. Use a machine account or GitHub App rather than a person\'s token.'
     );
   }
-  process.exit(1);
 }
 
 if (blocking.length === 0) {
