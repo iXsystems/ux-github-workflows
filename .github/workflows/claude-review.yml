@@ -274,9 +274,11 @@ jobs:
             echo "Authenticating with anthropic-api-key (API billing)."
           fi
 
-      # The scripts match their own previous comments and reviews by author.
-      # A GitHub App installation token cannot call /user; the scripts then
-      # fall back to matching on author type.
+      # The stale-marker script finds its own previous summary by author. A
+      # GitHub App installation token (`ghs_`) cannot call /user, so the login
+      # is left empty and that script matches on author type instead. Any
+      # other token that cannot answer /user is broken, and fails here rather
+      # than at the first post.
       - name: Resolve the posting identity
         id: identity
         env:
@@ -285,8 +287,11 @@ jobs:
         run: |
           if [ "$CUSTOM_TOKEN" != 'true' ]; then
             login='github-actions[bot]'
-          elif ! login=$(gh api user --jq .login 2>/dev/null); then
+          elif [ "${GH_TOKEN#ghs_}" != "$GH_TOKEN" ]; then
             login=''
+          elif ! login=$(gh api user --jq .login); then
+            echo "::error::github-token cannot call /user; it is not a usable PAT."
+            exit 1
           fi
           echo "login=$login" >> "$GITHUB_OUTPUT"
           echo "Posting as ${login:-a GitHub App (login unavailable)}."
@@ -544,7 +549,6 @@ jobs:
           # execution log's result entry.
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
           GH_TOKEN: ${{ env.REVIEW_GH_TOKEN }}
-          REVIEW_LOGIN: ${{ steps.identity.outputs.login }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

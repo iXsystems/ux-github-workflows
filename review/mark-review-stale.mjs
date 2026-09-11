@@ -16,7 +16,6 @@
  */
 
 import { writeFile } from 'node:fs/promises';
-import { isOwn } from './identity.mjs';
 
 const MARKER = /<!--\s*reviewed-sha:\s*([0-9a-f]{7,40})\s*-->/;
 
@@ -93,11 +92,14 @@ try {
   // current. The token has `issues: write` over the whole repo, so that edit
   // succeeds.
   //
-  // Matched on the identity this run posts as (see identity.mjs), which is
-  // what `gh pr comment --edit-last` will rewrite.
+  // Matched on the login this run posts as, which is what `gh pr comment
+  // --edit-last` will rewrite. REVIEW_LOGIN is empty only for a GitHub App
+  // token (no /user for those); the author type stands in, and the worst
+  // case of a wrong match here is a banner on another bot's summary.
+  const login = process.env.REVIEW_LOGIN;
   const summary = [...comments]
     .reverse()
-    .find((c) => isOwn(c.user) && MARKER.test(c.body ?? ''));
+    .find((c) => (login ? c.user?.login === login : c.user?.type === 'Bot') && MARKER.test(c.body ?? ''));
 
   if (!summary) {
     console.log('No previous review summary to mark; nothing to do.');

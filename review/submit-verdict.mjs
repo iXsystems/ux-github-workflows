@@ -23,10 +23,8 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { isOwn } from './identity.mjs';
 
 const BLOCKING = new Set(['BLOCKER', 'HIGH', 'MEDIUM']);
-const MARKER = '<!-- claude-review-verdict -->';
 
 // Workflow commands are line-oriented and every field is model-written, so a
 // newline or `::` in a summary would otherwise write the log rather than
@@ -151,8 +149,13 @@ for (const f of findings) {
   console.log(`::${level}${where && ` ${where}`}::${escapeData(`${f.severity}: ${f.summary}`)}`);
 }
 
-/** gitignore-style glob to regex: `**` crosses directories, `*` and `?` do not. */
-const globToRegExp = (glob) => {
+/**
+ * gitignore-style glob to regex: `**` crosses directories, `*` and `?` do
+ * not, a pattern without a slash matches at any depth, and a match on a
+ * directory covers everything beneath it, so `.github/` and `review` work.
+ */
+const globToRegExp = (pattern) => {
+  const glob = pattern.replace(/\/+$/, '');
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
@@ -164,8 +167,7 @@ const globToRegExp = (glob) => {
     else if (c === '?') re += '[^/]';
     else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
-  // A pattern without a slash matches at any depth, as in .gitignore.
-  return new RegExp(`^${glob.includes('/') ? '' : '(?:.*/)?'}${re}$`);
+  return new RegExp(`^${glob.includes('/') ? '' : '(?:.*/)?'}${re}(?:/.*)?$`);
 };
 
 /** Paths the caller listed as always needing a person, matched against the PR's files. */
@@ -178,13 +180,31 @@ const pathReasons = async () => {
     const re = globToRegExp(glob);
     const hits = [...names].filter((n) => re.test(n));
     if (hits.length) reasons.push(`\`${glob}\` (human-review-paths): ${hits.slice(0, 5).join(', ')}${hits.length > 5 ? ', …' : ''}`);
+    else console.log(`human-review-paths: \`${glob}\` matched no file in this PR.`);
   }
   return reasons;
 };
 
-const dismissOwnChangesRequested = async () => {
+/** Returns the review GitHub created, whose `user` is this run's identity. */
+const submit = async (event, lines) => {
+  const review = await api(`/pulls/${number}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify({ commit_id: head, event, body: lines.join('\n') }),
+  });
+  console.log(`Submitted a ${event} review for ${head.slice(0, 7)} as ${review.user?.login}.`);
+  return review;
+};
+
+/**
+ * A COMMENT does not clear an earlier REQUEST_CHANGES by the same identity;
+ * an APPROVE does. Own reviews are matched on the login of the review just
+ * posted — no /user call, and never another bot's.
+ */
+const dismissOwnChangesRequested = async (own) => {
   const reviews = await paginate(`/pulls/${number}/reviews`);
-  const stale = reviews.filter((r) => r.state === 'CHANGES_REQUESTED' && isOwn(r.user));
+  const stale = reviews.filter(
+    (r) => r.state === 'CHANGES_REQUESTED' && r.id !== own.id && r.user?.login === own.user?.login
+  );
   for (const r of stale) {
     await api(`/pulls/${number}/reviews/${r.id}/dismissals`, {
       method: 'PUT',
@@ -192,15 +212,6 @@ const dismissOwnChangesRequested = async () => {
     });
     console.log(`Dismissed changes-requested review ${r.id}.`);
   }
-};
-
-const submit = async (event, lines) => {
-  const body = [MARKER, ...lines].join('\n');
-  await api(`/pulls/${number}/reviews`, {
-    method: 'POST',
-    body: JSON.stringify({ commit_id: head, event, body }),
-  });
-  console.log(`Submitted a ${event} review for ${head.slice(0, 7)}.`);
 };
 
 const counts = ['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']
@@ -226,25 +237,25 @@ try {
       ...(humanReview.required ? (humanReview.reasons ?? []).map(String) : []),
       ...(await pathReasons()),
     ];
-    // A COMMENT review does not clear an earlier REQUEST_CHANGES by the same
-    // identity; an APPROVE does.
-    if (reasons.length > 0) {
-      await dismissOwnChangesRequested();
-      await submit('COMMENT', [
+    // On the flag, not the reason count: `required: true` with no reasons is
+    // schema-valid and must not approve.
+    if (humanReview.required || reasons.length > 0) {
+      const own = await submit('COMMENT', [
         `**Needs a human review.** ${countLine}`,
         '',
         'Nothing blocks, but this change is one a person should decide on:',
         '',
-        ...reasons.map((r) => `- ${r}`),
+        ...(reasons.length ? reasons : ['The reviewer flagged this as needing a person but gave no reason.']).map((r) => `- ${r}`),
       ]);
+      await dismissOwnChangesRequested(own);
       console.log(`Human review required: ${reasons.length} reason(s).`);
     } else if (!approveWhenClean) {
-      await dismissOwnChangesRequested();
-      await submit('COMMENT', [
+      const own = await submit('COMMENT', [
         `**Would approve.** ${countLine}`,
         '',
         'Nothing blocks and no human review is needed. Approval is off for this repository (`approve-when-clean`), so this is a comment.',
       ]);
+      await dismissOwnChangesRequested(own);
     } else {
       await submit('APPROVE', [
         `**Approved.** ${countLine}`,
