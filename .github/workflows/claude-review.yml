@@ -154,9 +154,9 @@ on:
           account's fine-grained PAT (Contents read, Pull requests write,
           Issues write) scoped to this one repository, or a GitHub App
           installation token — never a person's: GitHub refuses to approve
-          or request changes on the token owner's own PRs, and the verdict
-          step dismisses that person's own hand-written approvals as if they
-          were its own. Nothing narrows a PAT: not the job's `permissions:`
+          or request changes on the token owner's own PRs, and a review
+          posted as a person reads as that person's judgement. Nothing
+          narrows a PAT: not the job's `permissions:`
           block, and not the reviewer's allowlist, which matches command
           prefixes and so admits `gh pr comment --repo <other>`. The
           token's repository list is the blast radius of PR-controlled

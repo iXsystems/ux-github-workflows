@@ -247,11 +247,11 @@ the review come from `github-actions[bot]` under the job's `permissions:`
 block. Set, they come from that token's identity. Use a machine account's
 fine-grained PAT (Contents read, Pull requests write, Issues write) **scoped
 to the one repository**, or a GitHub App installation token, and **not a
-person's token**. Two reasons: GitHub refuses to approve or request changes
-on the token owner's own PRs, so every PR that person opens would be
-un-gateable — the loud failure — and the verdict step dismisses the posting
-identity's earlier approvals as its own, so a person's hand-written approval
-on someone else's PR is silently dismissed — the quiet one.
+person's token**: GitHub refuses to approve or request changes on the token
+owner's own PRs, so every PR that person opens would be un-gateable, and an
+approval posted as a person reads as that person's judgement rather than a
+check's. (The script dismisses only reviews carrying its own body marker, so
+a person's hand-written reviews are never touched.)
 
 Nothing narrows a PAT. The job's `permissions:` block does not apply to it,
 and the reviewer's allowlist is a list of command prefixes, not a repository
