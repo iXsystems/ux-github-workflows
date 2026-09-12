@@ -135,7 +135,7 @@ These are not reasons, however much they might feel like one:
 - size, or the number of files touched;
 - a refactor, rename, or move that keeps behaviour;
 - new or extended tests;
-- comments, docs, or wording changes;
+- comments, docs, or wording a user does not see;
 - a CI or workflow change that does not change permissions, secrets, what is
   published, or what gates a merge;
 - code that adds a case, branch, or handler alongside existing ones without
