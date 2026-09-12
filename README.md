@@ -290,13 +290,14 @@ cannot disagree with the check:
 | No or unparseable output | nothing | fails |
 
 "A human must look" is the reviewer's own answer to the *Does this need a
-human?* section of `review/rubric.md`, which defaults to no and says yes only
-for a line in the diff that removes or changes something external callers
-depend on, adds or major-bumps a dependency, changes a workflow's permissions,
-secrets or what it publishes, changes a visible default or removes a feature,
-deletes or loosens a test, or migrates persisted data. The PR description,
-deferred work, size, refactors, new tests and wording are listed there as
-non-reasons. `human-review-paths` is the floor under that judgement: it forces
+human?* section of `review/rubric.md`. In summary, it defaults to no and says
+yes for a line in the diff that removes or changes something external callers
+depend on, adds or major-bumps a runtime dependency, changes a workflow's
+permissions, secrets, what it publishes or what can merge, changes a visible
+default or removes a feature, deletes or loosens a test, migrates persisted
+data, or does what the repo's own review guidelines say a person decides. The
+PR description, deferred work, size, refactors, new tests and wording a user
+does not see are listed there as non-reasons; the rubric is the full list. `human-review-paths` is the floor under that judgement: it forces
 the answer for any PR touching a matching file regardless of what the reviewer
 said, and is where a repo puts the paths it always wants eyes on.
 
