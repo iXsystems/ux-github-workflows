@@ -290,13 +290,15 @@ cannot disagree with the check:
 | No or unparseable output | nothing | fails |
 
 "A human must look" is the reviewer's own answer to the *Does this need a
-human?* section of `review/rubric.md` — public API or exported type changes, a
-new or major-bumped dependency, CI, release or auth changes, user-facing
-behaviour, wording or default changes, removed tests, data migrations, anything
-the PR presents as a decision — plus `human-review-paths`, which forces it for
-any PR touching a matching file regardless of what the reviewer said. That
-input is the floor: the model's call on "is this a product decision" is the
-fuzziest judgement in the pipeline, and a path list does not depend on it.
+human?* section of `review/rubric.md`, which defaults to no and says yes only
+for a line in the diff that removes or changes something external callers
+depend on, adds or major-bumps a dependency, changes a workflow's permissions,
+secrets or what it publishes, changes a visible default or removes a feature,
+deletes or loosens a test, or migrates persisted data. The PR description,
+deferred work, size, refactors, new tests and wording are listed there as
+non-reasons. `human-review-paths` is the floor under that judgement: it forces
+the answer for any PR touching a matching file regardless of what the reviewer
+said, and is where a repo puts the paths it always wants eyes on.
 
 Each run adds a review; GitHub reviews are appended, not edited, so a PR with
 ten pushes carries ten of them, and the newest is the one that describes the

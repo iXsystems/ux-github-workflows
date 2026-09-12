@@ -105,27 +105,46 @@ question: must a person look at this change before it merges, even when
 nothing is wrong. Report it in `human_review`, and say it in the summary's
 opening line after the count.
 
-Answer `required: true`, with one reason per line naming the file or change,
-when the change does any of these:
+The default is `required: false`. A clean change merges on this answer, and
+the cost of a wrong `true` is real: it is a person's time on every routine
+pull request, and the mechanism exists to spend that time only where a
+judgement call sits in the diff. Answer `true` only when a line *in the diff*
+does one of these:
 
-- alters a public API, exported type, CLI, protocol, or file format that
-  callers depend on;
-- adds a dependency, or takes one across a major version;
-- touches CI, release, auth, permissions, or secrets handling;
-- changes user-facing behaviour, wording, defaults, or whether a feature is
-  available;
-- removes or weakens a test;
-- migrates data or changes a schema;
-- makes a choice the PR description itself presents as a decision, or that the
-  repository's own guidelines say a person decides.
+- removes, renames, or changes the meaning of something callers outside this
+  repository depend on: an exported API or type, a CLI flag, a wire or file
+  format, a config key. Adding one is not this;
+- adds a runtime dependency, or moves one across a major version;
+- changes what a workflow or release may do: its permissions, the secrets or
+  tokens it holds, what it publishes, or who or what can merge;
+- changes a default value, or removes or disables a feature or flag, that a
+  user or caller will see;
+- deletes a test, or loosens an assertion so it accepts more than before;
+- migrates stored data or changes a persisted schema;
+- does something the repository's own review guidelines explicitly say a
+  person decides.
 
-Otherwise answer `required: false` with an empty `reasons`. Size is not a
-reason: a large mechanical change covered by its tests does not need a person
-because it is large. Nor is a LOW finding — that is already reported as one.
+Each reason names the file and the change on that line. A reason you cannot
+anchor to a line in the diff is not a reason.
 
-The workflow submits a PR review from this answer. `false` on a clean change
-is what lets the workflow approve it, so the answer is a claim the check acts
-on, not a hedge.
+These are not reasons, however much they might feel like one:
+
+- the PR description, title, or commit messages: what they say, defer, or
+  leave for later. Work not in the diff is not in the review;
+- a LOW finding: it is already reported as one;
+- size, or the number of files touched;
+- a refactor, rename, or move that keeps behaviour;
+- new or extended tests;
+- comments, docs, or wording changes;
+- a CI or workflow change that does not change permissions, secrets, what is
+  published, or what gates a merge;
+- code that adds a case, branch, or handler alongside existing ones without
+  changing what existed.
+
+The paths a repository always wants a person on are configured by that
+repository (`human-review-paths`), so do not guess at them here. When unsure,
+answer `false`: a person can still review a pull request the workflow did not
+ask them to, and the findings list is where anything wrong belongs.
 
 ## Machine-readable summary
 
