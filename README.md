@@ -287,6 +287,7 @@ cannot disagree with the check:
 | Only LOW or none, a human must look | COMMENT listing the reasons | passes, no approval |
 | Only LOW or none, `approve-when-clean` off | COMMENT "would approve" | passes |
 | Only LOW or none, `approve-when-clean` on | APPROVE | passes |
+| Only LOW or none, but GitHub refuses the APPROVE | COMMENT quoting the refusal | passes |
 | No or unparseable output | nothing | fails |
 
 "A human must look" is the reviewer's own answer to the *Does this need a
@@ -335,9 +336,12 @@ Making the review count is branch protection, per repo:
   re-reviewed, and `cancel-in-progress` makes that window real.
 - **With the job token only:** enable *Allow GitHub Actions to create and
   approve pull requests* in the repository's (or organisation's) Actions
-  settings, or APPROVE returns 422. A review the token cannot post is a
-  warning in the log, never a change to the check: the score decides the
-  exit status, so a clean PR stays green and simply gets no review.
+  settings, or APPROVE returns 422. A refused approval falls back to the
+  "would approve" COMMENT, which quotes the refusal and clears the run's own
+  earlier request-changes, so the PR is not left blocked by a round it has
+  since passed. Any other review the token cannot post is a warning in the
+  log, never a change to the check: the score decides the exit status, so a
+  clean PR stays green and simply gets no review.
 - **CODEOWNERS:** if *Require review from Code Owners* is on, the approval only
   satisfies it when the posting identity is a code owner.
 

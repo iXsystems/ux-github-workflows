@@ -12,6 +12,7 @@
  *   clean, but a human must look             COMMENT naming why, job passes
  *   clean, approve-when-clean off            COMMENT "would approve", job passes
  *   clean, approve-when-clean on             APPROVE, job passes
+ *   clean, but GitHub refuses the APPROVE    COMMENT saying so, job passes
  *   no or unparseable output                 nothing submitted, job fails
  *
  * Nothing is submitted on a crashed reviewer on purpose: a changes-requested
@@ -246,6 +247,17 @@ const dismissOwnStateReviews = async (own) => {
   }
 };
 
+const approveHint = (error) => {
+  if (!/HTTP 422/.test(error.message)) return;
+  console.log(
+    'HTTP 422 on a review is usually one of two things: the job token is not allowed to ' +
+    'approve — enable "Allow GitHub Actions to create and approve pull requests" in the ' +
+    'repository or organisation Actions settings — or the owner of the github-token ' +
+    'secret authored this PR, which GitHub refuses to let anyone approve or request ' +
+    'changes on. Use a machine account or GitHub App rather than a person\'s token.'
+  );
+};
+
 const counts = ['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']
   .map((s) => [s, findings.filter((f) => f.severity === s).length])
   .filter(([, n]) => n > 0)
@@ -289,11 +301,30 @@ try {
       ]);
       await dismissOwnStateReviews(own);
     } else {
-      await submit('APPROVE', [
-        `**Approved.** ${countLine}`,
-        '',
-        'Nothing blocks and no human review is needed.',
-      ]);
+      // An APPROVE supersedes the identity's earlier REQUEST_CHANGES only if
+      // it lands. Refused (the Actions approve setting, a token whose owner
+      // authored the PR), fall back to the COMMENT path so the stale block
+      // is still cleared and the refusal is on the PR, not only in the log.
+      try {
+        await submit('APPROVE', [
+          `**Approved.** ${countLine}`,
+          '',
+          'Nothing blocks and no human review is needed.',
+        ]);
+      } catch (error) {
+        console.log(`::warning::could not approve: ${escapeData(error.message)}`);
+        approveHint(error);
+        const own = await submit('COMMENT', [
+          `**Would approve.** ${countLine}`,
+          '',
+          'Nothing blocks and no human review is needed, but GitHub refused the approval:',
+          '',
+          `> ${error.message.replace(/\s+/g, ' ').slice(0, 300)}`,
+          '',
+          'With the job token this needs *Allow GitHub Actions to create and approve pull requests* in the repository\'s Actions settings; otherwise pass a `github-token` from a machine account.',
+        ]);
+        await dismissOwnStateReviews(own);
+      }
     }
   }
 } catch (error) {
@@ -303,15 +334,7 @@ try {
   // red for good.
   console.log(`::warning::could not submit the review: ${escapeData(error.message)}`);
   console.log('The check still reports the score below; only the PR review is missing.');
-  if (/HTTP 422/.test(error.message)) {
-    console.log(
-      'HTTP 422 on a review is usually one of two things: the job token is not allowed to ' +
-      'approve — enable "Allow GitHub Actions to create and approve pull requests" in the ' +
-      'repository or organisation Actions settings — or the owner of the github-token ' +
-      'secret authored this PR, which GitHub refuses to let anyone approve or request ' +
-      'changes on. Use a machine account or GitHub App rather than a person\'s token.'
-    );
-  }
+  approveHint(error);
 }
 
 if (blocking.length === 0) {
