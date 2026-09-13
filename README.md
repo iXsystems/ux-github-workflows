@@ -304,7 +304,7 @@ said, and is where a repo puts the paths it always wants eyes on.
 
 Each run adds a review; GitHub reviews are appended, not edited, so a PR with
 ten pushes carries ten of them, and the newest is the one that describes the
-head commit. REQUEST_CHANGES and APPROVE change the PR's state; the two
+head commit. REQUEST_CHANGES and APPROVE change the PR's state; the
 COMMENT outcomes do not.
 
 Nothing is submitted when the reviewer crashed, on purpose: a changes-requested
