@@ -312,6 +312,10 @@ try {
           'Nothing blocks and no human review is needed.',
         ]);
       } catch (error) {
+        // Only a refusal falls back. A request that got no answer (the 15s
+        // timeout, a dropped connection) may have created the review anyway,
+        // and commenting then would dismiss the approval that landed.
+        if (!/HTTP 422/.test(error.message)) throw error;
         console.log(`::warning::could not approve: ${escapeData(error.message)}`);
         approveHint(error);
         const own = await submit('COMMENT', [
