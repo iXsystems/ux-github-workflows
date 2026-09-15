@@ -203,6 +203,7 @@ either, so granting it in a caller has no effect on the token the job runs with.
 | `extra-allowed-tools` | `''` | Comma-separated permission rules appended to the reviewer's `--allowedTools`, e.g. `Bash(go vet:*)`. Empty by default on purpose: anything that executes repo code runs PR-controlled code next to the job's write token, so each repo opts in as its own recorded decision |
 | `approve-when-clean` | `true` | Submit an APPROVE review when nothing blocks and no human review is needed. Set `false` to get a COMMENT saying it would have approved instead, to watch the calls before they count |
 | `human-review-paths` | `''` | Newline-separated globs, gitignore rules: `*`, `**`, `?`; a name with no slash (trailing one aside) matches at any depth, one with a slash is root-anchored, a directory match covers everything beneath it; no `!`, leading `/`, brackets or braces; `#` lines ignored. A PR touching a match always gets the needs-a-human COMMENT, whatever the reviewer decided |
+| `human-review-team` | `ux-team` | Team in the calling repo's org asked for a review when a human review is needed, once per PR. Empty disables it |
 | `tooling-ref` | `master` | Ref this repo's `review/` assets come from; see below |
 
 The secret is named, not inherited, because the repos call it different things
@@ -284,7 +285,7 @@ cannot disagree with the check:
 | Result | Review submitted | Job |
 |---|---|---|
 | Anything at MEDIUM or above | REQUEST_CHANGES | fails |
-| Only LOW or none, a human must look | COMMENT listing the reasons | passes, no approval |
+| Only LOW or none, a human must look | COMMENT listing the reasons, and a review request to `human-review-team` | passes, no approval |
 | Only LOW or none, `approve-when-clean` off | COMMENT "would approve" | passes |
 | Only LOW or none, `approve-when-clean` on | APPROVE | passes |
 | Only LOW or none, but GitHub refuses the APPROVE | COMMENT quoting the refusal | passes |
@@ -325,6 +326,14 @@ review then stays until a person dismisses it.
 
 Making the review count is branch protection, per repo:
 
+- **Turn on code review auto-assignment for the team** named by
+  `human-review-team`, in each org's team settings. The workflow requests the
+  team; auto-assignment is what swaps the team for one member. Without it the
+  whole team stays requested. The request is made once per PR and skipped if
+  any reviewer is already requested, so pushes do not reassign it. It is best
+  effort: a token that cannot request team reviewers logs a warning. The job
+  token may not be able to; a fine-grained PAT may need the organisation
+  Members read permission on top of Pull requests write.
 - **Require 1 approval** and mark `Automatic PR review` required. The
   workflow's approval satisfies the first, which is the whole mechanism and the
   whole risk: a PR the reviewer misjudges as routine merges with no person
