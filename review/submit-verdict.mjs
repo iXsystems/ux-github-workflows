@@ -87,7 +87,7 @@ const paginate = async (path) => {
   return all;
 };
 
-// Fetched before the verdict is posted; every consumer excludes that review by id.
+// May be filled before the verdict is posted; callers that must not see it exclude it by id.
 let reviewsCache;
 const listReviews = async () => (reviewsCache ??= await paginate(`/pulls/${number}/reviews`));
 

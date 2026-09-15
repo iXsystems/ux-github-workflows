@@ -285,7 +285,7 @@ cannot disagree with the check:
 | Result | Review submitted | Job |
 |---|---|---|
 | Anything at MEDIUM or above | REQUEST_CHANGES | fails |
-| Only LOW or none, a human must look | COMMENT listing the reasons, and a review request to `human-review-team` | passes, no approval |
+| Only LOW or none, a human must look | COMMENT listing the reasons, and with a `github-token` a review request to `human-review-team` | passes, no approval |
 | Only LOW or none, `approve-when-clean` off | COMMENT "would approve" | passes |
 | Only LOW or none, `approve-when-clean` on | APPROVE | passes |
 | Only LOW or none, but GitHub refuses the APPROVE | COMMENT quoting the refusal | passes |
