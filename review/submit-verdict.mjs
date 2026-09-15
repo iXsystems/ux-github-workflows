@@ -46,6 +46,7 @@ const number = Number(env('PR_NUMBER'));
 const head = env('HEAD_SHA');
 const approveWhenClean = env('APPROVE_WHEN_CLEAN') === 'true';
 const humanReviewTeam = env('HUMAN_REVIEW_TEAM');
+const hasGithubToken = env('HAS_GITHUB_TOKEN') === 'true';
 const REQUESTED_MARKER = '<!-- claude-review-requested-team -->';
 const humanReviewPaths = env('HUMAN_REVIEW_PATHS')
   .split('\n')
@@ -85,6 +86,10 @@ const paginate = async (path) => {
   }
   return all;
 };
+
+// Fetched before the verdict is posted; every consumer excludes that review by id.
+let reviewsCache;
+const listReviews = async () => (reviewsCache ??= await paginate(`/pulls/${number}/reviews`));
 
 /** The reviewer's terminal API error, when it died before producing output. */
 const terminalApiError = () => {
@@ -229,7 +234,7 @@ const submit = async (event, lines) => {
  */
 const dismissOwnStateReviews = async (own) => {
   try {
-    const reviews = await paginate(`/pulls/${number}/reviews`);
+    const reviews = await listReviews();
     const stale = reviews.filter(
       (r) =>
         ['CHANGES_REQUESTED', 'APPROVED'].includes(r.state) &&
@@ -252,20 +257,26 @@ const dismissOwnStateReviews = async (own) => {
 
 /**
  * Asks the caller's org team for a review; the team's auto-assignment picks
- * the person. Once per PR: skipped when a reviewer is already requested, or
- * an earlier verdict recorded a request, so each push does not assign someone
- * new. Best effort. Returns the lines for the review body.
+ * the person. Once per PR: skipped when any reviewer is already requested
+ * (CODEOWNERS included — after auto-assignment the team is often replaced by
+ * a user, so checking for the team alone would assign a second person), or
+ * when an earlier verdict recorded a request. Best effort. Returns the lines
+ * for the review body.
  */
 const requestTeamReview = async () => {
   if (!humanReviewTeam) return [];
   const team = `${repo.split('/')[0]}/${humanReviewTeam}`;
+  if (!hasGithubToken) {
+    console.log(`Not requesting ${team}: the job token cannot request team reviewers. Pass a github-token.`);
+    return [];
+  }
   try {
     const requested = await api(`/pulls/${number}/requested_reviewers`);
     if (requested.users?.length || requested.teams?.length) {
       console.log('A reviewer is already requested; not requesting the team.');
       return [];
     }
-    const reviews = await paginate(`/pulls/${number}/reviews`);
+    const reviews = await listReviews();
     if (reviews.some((r) => (r.body ?? '').includes(MARKER) && r.body.includes(REQUESTED_MARKER))) {
       console.log(`${team} was requested on an earlier run; not requesting again.`);
       return [];
