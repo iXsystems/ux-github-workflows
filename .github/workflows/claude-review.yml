@@ -121,6 +121,15 @@ on:
           judgement of what needs a person.
         type: string
         default: ''
+      human-review-team:
+        description: >-
+          Team slug in the calling repository's org to request a review from
+          when a human review is needed, once per PR. The team's code review
+          auto-assignment decides who gets it. Empty disables the request.
+          Skipped without a github-token: the job token cannot request team
+          reviewers (GitHub answers 422, unable to resolve the team).
+        type: string
+        default: 'ux-team'
       tooling-ref:
         description: >-
           Ref of this repository to take the schema, rubric and scripts from.
@@ -577,4 +586,6 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           APPROVE_WHEN_CLEAN: ${{ inputs.approve-when-clean }}
           HUMAN_REVIEW_PATHS: ${{ inputs.human-review-paths }}
+          HUMAN_REVIEW_TEAM: ${{ inputs.human-review-team }}
+          HAS_GITHUB_TOKEN: ${{ secrets.github-token != '' }}
         run: node .claude-review/tooling/review/submit-verdict.mjs
