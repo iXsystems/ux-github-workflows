@@ -9,7 +9,8 @@
  * `gh pr review`, so the review state on the PR cannot disagree with the check.
  *
  *   any finding >= MEDIUM                    REQUEST_CHANGES, job fails
- *   clean, but a human must look             COMMENT naming why, job passes
+ *   clean, but a human must look             COMMENT naming why, team review
+ *                                            requested once per PR, job passes
  *   clean, approve-when-clean off            COMMENT "would approve", job passes
  *   clean, approve-when-clean on             APPROVE, job passes
  *   clean, but GitHub refuses the APPROVE    COMMENT saying so, job passes
@@ -44,6 +45,9 @@ const repo = env('GITHUB_REPOSITORY');
 const number = Number(env('PR_NUMBER'));
 const head = env('HEAD_SHA');
 const approveWhenClean = env('APPROVE_WHEN_CLEAN') === 'true';
+const humanReviewTeam = env('HUMAN_REVIEW_TEAM');
+const hasGithubToken = env('HAS_GITHUB_TOKEN') === 'true';
+const REQUESTED_MARKER = '<!-- claude-review-requested-team -->';
 const humanReviewPaths = env('HUMAN_REVIEW_PATHS')
   .split('\n')
   .map((p) => p.trim())
@@ -82,6 +86,10 @@ const paginate = async (path) => {
   }
   return all;
 };
+
+// May be filled before the verdict is posted; callers that must not see it exclude it by id.
+let reviewsCache;
+const listReviews = async () => (reviewsCache ??= await paginate(`/pulls/${number}/reviews`));
 
 /** The reviewer's terminal API error, when it died before producing output. */
 const terminalApiError = () => {
@@ -226,7 +234,7 @@ const submit = async (event, lines) => {
  */
 const dismissOwnStateReviews = async (own) => {
   try {
-    const reviews = await paginate(`/pulls/${number}/reviews`);
+    const reviews = await listReviews();
     const stale = reviews.filter(
       (r) =>
         ['CHANGES_REQUESTED', 'APPROVED'].includes(r.state) &&
@@ -244,6 +252,45 @@ const dismissOwnStateReviews = async (own) => {
   } catch (error) {
     console.log(`::warning::could not dismiss the previous review: ${escapeData(error.message)}`);
     console.log('A changes-requested review still blocks the merge, and an approval still counts, until someone dismisses it. On a protected branch the posting identity must be an admin or on the review-dismissal list.');
+  }
+};
+
+/**
+ * Asks the caller's org team for a review; the team's auto-assignment picks
+ * the person. Once per PR: skipped when any reviewer is already requested
+ * (CODEOWNERS included — after auto-assignment the team is often replaced by
+ * a user, so checking for the team alone would assign a second person), or
+ * when an earlier verdict recorded a request. Best effort. Returns the lines
+ * for the review body.
+ */
+const requestTeamReview = async () => {
+  if (!humanReviewTeam) return [];
+  const team = `${repo.split('/')[0]}/${humanReviewTeam}`;
+  if (!hasGithubToken) {
+    console.log(`Not requesting ${team}: the job token cannot request team reviewers. Pass a github-token.`);
+    return [];
+  }
+  try {
+    const requested = await api(`/pulls/${number}/requested_reviewers`);
+    if (requested.users?.length || requested.teams?.length) {
+      console.log('A reviewer is already requested; not requesting the team.');
+      return [];
+    }
+    const reviews = await listReviews();
+    if (reviews.some((r) => (r.body ?? '').includes(MARKER) && r.body.includes(REQUESTED_MARKER))) {
+      console.log(`${team} was requested on an earlier run; not requesting again.`);
+      return [];
+    }
+    await api(`/pulls/${number}/requested_reviewers`, {
+      method: 'POST',
+      body: JSON.stringify({ team_reviewers: [humanReviewTeam] }),
+    });
+    console.log(`Requested a review from ${team}.`);
+    // Backticks, not an @-mention: a mention would notify the whole team.
+    return ['', `Requested a review from \`${team}\`.`, REQUESTED_MARKER];
+  } catch (error) {
+    console.log(`::warning::could not request a review from ${team}: ${escapeData(error.message)}`);
+    return [];
   }
 };
 
@@ -284,12 +331,14 @@ try {
     // On the flag, not the reason count: `required: true` with no reasons is
     // schema-valid and must not approve.
     if (humanReview.required || reasons.length > 0) {
+      const requestLines = await requestTeamReview();
       const own = await submit('COMMENT', [
         `**Needs a human review.** ${countLine}`,
         '',
         'Nothing blocks, but this change is one a person should decide on:',
         '',
         ...(reasons.length ? reasons : ['The reviewer flagged this as needing a person but gave no reason.']).map((r) => `- ${r}`),
+        ...requestLines,
       ]);
       await dismissOwnStateReviews(own);
       console.log(`Human review required: ${reasons.length} reason(s).`);
