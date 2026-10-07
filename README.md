@@ -194,7 +194,7 @@ either, so granting it in a caller has no effect on the token the job runs with.
 
 | Input | Default | Notes |
 |---|---|---|
-| `model` | `claude-opus-5` | Passed through `claude_args` |
+| `model` | `claude-opus-5-5` | Passed through `claude_args` |
 | `prompt-file` | `.claude/review-prompt.md` | The repo's own guidelines |
 | `require-write-access` | `true` | Calls `check-member.yml`. Keep it on — it is what stops a drive-by PR spending tokens |
 | `skip-label` | `skip-claude` | Skips the review and the gate. Does not clear a changes-requested review an earlier run posted; a person dismisses that in the PR |

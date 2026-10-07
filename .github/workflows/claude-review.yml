@@ -60,7 +60,7 @@ on:
       model:
         description: 'Model passed via claude_args.'
         type: string
-        default: 'claude-opus-5'
+        default: 'claude-opus-5-5'
       prompt-file:
         description: >-
           Repo-relative path to the caller's own review guidelines — what to
