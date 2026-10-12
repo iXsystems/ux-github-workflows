@@ -2,6 +2,8 @@
 test_tnctl.py. Standard library only, like tnctl."""
 
 import base64
+import contextlib
+import io
 import hashlib
 import json
 import os
@@ -10,6 +12,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -122,11 +125,19 @@ class TestTnctl(unittest.TestCase):
             "auth.login_ex": lambda creds, notify: {"response_type": "SUCCESS" if creds["password"] == "pw" else "AUTH_ERR"},
             "system.ready": lambda notify: next(ready),
             # Bigger than one short frame length can say, and than two.
-            "system.info": lambda notify: {"blob": "x" * 70000},
+            "system.info": lambda notify: {"blob": "x" * 70000, "uptime_seconds": 12.5},
         })
         self.addCleanup(srv.close)
-        tnctl.cmd_wait(args(url=srv.url, user="truenas_admin", password="pw"))
-        self.assertEqual([m for m, _ in srv.calls], ["auth.login_ex", "system.ready", "system.ready", "system.ready"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            tnctl.cmd_wait(args(url=srv.url, user="truenas_admin", password="pw", since=time.time()))
+        self.assertEqual([m for m, _ in srv.calls],
+                         ["auth.login_ex", "system.ready", "system.ready", "system.ready", "system.info"])
+        # Each milestone once, in the order they happen.
+        milestones = [line.split(" ", 2)[2] for line in err.getvalue().splitlines() if line.startswith("tnctl: +")]
+        self.assertEqual(milestones[:4], [f"port {srv.url.rsplit(':', 1)[1]} accepts connections",
+                                          "the API's websocket answers", "login accepted", "system.ready"])
+        self.assertIn("the guest's kernel started (it has been up 12.5s)", milestones[4])
         self.assertEqual(srv.paths, ["/api/current"])
         c = tnctl.login(srv.url, "truenas_admin", "pw")
         self.assertEqual(len(c.call("system.info")["blob"]), 70000)
@@ -189,6 +200,24 @@ class TestTnctl(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             tnctl.cmd_hmp(args(socket=path, line="loadvm nope"))
         self.assertEqual(e.exception.code, 1)
+
+
+class TestTailTs(unittest.TestCase):
+    def test_lines_are_timed_and_cleaned(self):
+        d = tempfile.mkdtemp()
+        src, out = os.path.join(d, "console.log"), os.path.join(d, "console.ts.log")
+        with open(src, "wb") as f:
+            f.write(b"\x1b[1;32m[  OK  ]\x1b[0m Started middlewared\r\n\r\nhalf")
+        # A pid that has exited: copy what is there, then stop.
+        dead = os.fork()
+        if dead == 0:
+            os._exit(0)
+        os.waitpid(dead, 0)
+        tnctl.cmd_tail_ts(args(file=src, out=out, since=time.time() - 5, pid=dead))
+        with open(out) as f:
+            lines = f.read().splitlines()
+        self.assertEqual([line.split(None, 1)[1] for line in lines], ["[  OK  ] Started middlewared", "half"])
+        self.assertTrue(all(4.5 < float(line.split()[0]) < 30 for line in lines), lines)
 
 
 if __name__ == "__main__":

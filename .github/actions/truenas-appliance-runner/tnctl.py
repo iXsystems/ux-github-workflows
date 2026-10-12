@@ -14,11 +14,20 @@ QMP over a unix socket. appliance.sh calls it; the image build does too.
       Once the installed system is up: create its admin. Only a system
       with no admin yet allows this, unauthenticated.
 
-  tnctl.py wait URL USER PASSWORD [--timeout S]
+  tnctl.py wait URL USER PASSWORD [--timeout S] [--since EPOCH]
       Until USER can log in and system.ready is true; prints the seconds.
+      With --since, a boot's: logs each milestone on the way in seconds
+      since EPOCH (qemu's start): the port accepting connections, the API's
+      websocket answering, the login accepted, system.ready, and when the
+      guest's kernel started (from its uptime).
+
+  tnctl.py tail-ts FILE OUT [--since EPOCH] [--pid PID]
+      Copy the lines FILE grows by into OUT, each prefixed with the seconds
+      since EPOCH, until PID exits: the serial console, timed.
 
   tnctl.py rotate URL USER PASSWORD NEW
-  tnctl.py enable-ssh URL USER PASSWORD
+  tnctl.py enable-ssh URL USER PASSWORD [--pubkey KEY]
+      ssh for USER with its password, or with KEY and sudo without one.
   tnctl.py call URL USER PASSWORD METHOD [JSON-PARAMS...]
       One call as USER, its result as JSON on stdout.
   tnctl.py wait-verify URL USER PASSWORD [--timeout S]
@@ -39,6 +48,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -266,16 +276,88 @@ def cmd_setup_admin(a):
 
 def cmd_wait(a):
     start = time.monotonic()
-    c = retry("a login", a.timeout, lambda: login(a.url, a.user, a.password), every=2)
+    t0 = a.since
+    host, port = urllib.parse.urlsplit(a.url).hostname, urllib.parse.urlsplit(a.url).port or 80
+    seen = set()
+
+    def mark(what):
+        if t0 is not None and what not in seen:
+            seen.add(what)
+            log(f"+{time.time() - t0:.1f}s {what}")
+
+    def attempt():
+        with socket.create_connection((host, port), timeout=2):
+            pass
+        mark(f"port {port} accepts connections")
+        c = RPC(api(a.url), 30)
+        try:
+            mark("the API's websocket answers")
+            r = c.call("auth.login_ex", {"mechanism": "PASSWORD_PLAIN", "username": a.user, "password": a.password})
+            if (r or {}).get("response_type") != "SUCCESS":
+                raise RPCError("auth.login_ex", r)
+        except BaseException:
+            c.close()
+            raise
+        mark("login accepted")
+        return c
+
+    c = retry("a login", a.timeout, attempt, every=1)
+
     def ready():
         if not c.call("system.ready"):
             raise ValueError("not ready yet")
 
     try:
-        retry("system.ready", max(10, a.timeout - (time.monotonic() - start)), ready, every=2)
+        retry("system.ready", max(10, a.timeout - (time.monotonic() - start)), ready, every=1)
+        mark("system.ready")
+        if t0 is not None:
+            try:
+                uptime = float(c.call("system.info")["uptime_seconds"])
+                log(f"+{time.time() - t0 - uptime:.1f}s the guest's kernel started (it has been up {uptime:.1f}s)")
+            except (RPCError, KeyError, TypeError, ValueError) as e:
+                log("no uptime from system.info:", e)
     finally:
         c.close()
     print(f"{time.monotonic() - start:.1f}")
+
+
+ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]|\r")
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
+def cmd_tail_ts(a):
+    t0 = a.since if a.since is not None else time.time()
+    while not os.path.exists(a.file):
+        if a.pid and not alive(a.pid):
+            return
+        time.sleep(0.2)
+    buf = b""
+    with open(a.file, "rb") as f, open(a.out, "ab", buffering=0) as out:
+        while True:
+            data = f.read(65536)
+            if not data:
+                if a.pid and not alive(a.pid):
+                    break
+                time.sleep(0.2)
+                continue
+            buf += data
+            *lines, buf = buf.split(b"\n")
+            stamp = f"{time.time() - t0:7.1f} ".encode()
+            for line in lines:
+                line = ANSI.sub(b"", line).rstrip()
+                if line:
+                    out.write(stamp + line + b"\n")
+        if buf.strip():
+            out.write(f"{time.time() - t0:7.1f} ".encode() + ANSI.sub(b"", buf).rstrip() + b"\n")
 
 
 def cmd_wait_verify(a):
@@ -303,7 +385,12 @@ def cmd_enable_ssh(a):
     c = login(a.url, a.user, a.password)
     try:
         uid = c.call("user.query", [["username", "=", a.user]], {"get": True})["id"]
-        c.call("user.update", uid, {"ssh_password_enabled": True})
+        if a.pubkey:
+            # A key, and sudo without a password, for a script to log in
+            # with and read what only root can.
+            c.call("user.update", uid, {"sshpubkey": a.pubkey, "sudo_commands_nopasswd": ["ALL"]})
+        else:
+            c.call("user.update", uid, {"ssh_password_enabled": True})
         c.call("service.update", "ssh", {"enable": True})
         c.job("service.control", "START", "ssh", {"silent": False})
     finally:
@@ -377,10 +464,13 @@ def main():
 
     p("install", cmd_install, "url", timeout=3600).add_argument("--disk", default="")
     p("setup-admin", cmd_setup_admin, "url", "user", "password")
-    p("wait", cmd_wait, "url", "user", "password")
+    p("wait", cmd_wait, "url", "user", "password").add_argument("--since", type=float)
+    tail = p("tail-ts", cmd_tail_ts, "file", "out")
+    tail.add_argument("--since", type=float)
+    tail.add_argument("--pid", type=int)
     p("wait-verify", cmd_wait_verify, "url", "user", "password", timeout=300)
     p("rotate", cmd_rotate, "url", "user", "password", "new")
-    p("enable-ssh", cmd_enable_ssh, "url", "user", "password")
+    p("enable-ssh", cmd_enable_ssh, "url", "user", "password").add_argument("--pubkey", default="")
     p("call", cmd_call, "url", "user", "password", "method", timeout=120).add_argument("params", nargs="*")
     p("qmp", cmd_qmp, "socket", "command").add_argument("args", nargs="?")
     p("hmp", cmd_hmp, "socket", "line")

@@ -561,7 +561,14 @@ jobs:
 Outputs: `host`, `host-http`, `username`, `password` (masked), `ssh`,
 `boot-seconds`, `snapshot-seconds`. `truenas-appliance` is put on `PATH`:
 `snapshot <name>`, `revert <name>`, `call <method> [params...]`,
-`snapshots`, `console [lines]`, `probe`.
+`snapshots`, `console [lines]`, `probe`, and `boot-report`: where the boot's
+time went, from systemd and middleware's own log, over ssh (it leaves ssh on
+with a key and sudo for the admin, so revert afterwards if that matters).
+
+The step's log has the boot's milestones, in seconds since qemu started (the
+port accepting connections, the API's websocket answering, the login,
+`system.ready`, and when the guest's kernel started), and the console of the
+boot on the same clock, folded.
 
 These scripts are the one copy. github-truenas-runner's image pipeline
 fetches them from here, at the last commit that changed this directory, to

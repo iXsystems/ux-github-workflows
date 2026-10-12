@@ -14,6 +14,11 @@
 #                                 disks, as <name>
 #   appliance.sh revert <name>    back to <name>, in seconds, no boot
 #   appliance.sh probe [baseline] change it, revert, check the change went
+#   appliance.sh boot-report     where the boot's time went: systemd's
+#                                 critical chain and slowest units, and
+#                                 middleware's start, over ssh. Leaves ssh
+#                                 on, with a key and sudo for the admin:
+#                                 revert afterwards if that matters
 #   appliance.sh call <method> [params...]
 #                                 a middleware API call, as the admin, its
 #                                 result as JSON on stdout
@@ -131,8 +136,9 @@ start() {
                  -device "virtio-blk-pci,drive=data$i,serial=data$i")
     done
 
-    local booted
+    local booted t0
     say "booting $disk as $name: ${memory} MB, $vcpus vCPUs, $ndata data disks of ${datagb}G"
+    t0=$(date +%s.%N)
     qemu-system-x86_64 -name "$name" -machine "q35,accel=$accel" -cpu "$cpu" -smp "$vcpus" -m "$memory" \
         -smbios "type=1,serial=$name" \
         -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE" \
@@ -145,11 +151,15 @@ start() {
         -qmp "unix:$QMP,server=on,wait=off" \
         -display none -serial "file:$DIR/console.log" \
         -daemonize -pidfile "$DIR/qemu.pid"
+    # The console, each line with the seconds since qemu started, for as
+    # long as qemu runs: the boot's milestones below are on the same clock.
+    nohup "${TNCTL[@]}" tail-ts "$DIR/console.log" "$DIR/console.ts.log" \
+        --since "$t0" --pid "$(cat "$DIR/qemu.pid")" >/dev/null 2>&1 &
 
     if ! booted=$("${TNCTL[@]}" wait "$(url)" "$APPLIANCE_USER" "$APPLIANCE_TEMPLATE_PASSWORD" \
-            --timeout "${APPLIANCE_BOOT_TIMEOUT:-900}"); then
+            --since "$t0" --timeout "${APPLIANCE_BOOT_TIMEOUT:-900}"); then
         say "--- its console, last 60 lines"
-        tail -n 60 "$DIR/console.log" >&2 || true
+        console 60 >&2 || true
         die "the appliance's API never came up"
     fi
     say "API up ${booted}s after qemu started"
@@ -161,6 +171,7 @@ start() {
     {
         echo "APPLIANCE_PASSWORD_NOW=$(printf %q "$password")"
         echo "APPLIANCE_HTTP_PORT=$http"
+        echo "APPLIANCE_SSH_PORT=$sshp"
     } > "$STATE"
 
     local snapped=""
@@ -217,6 +228,56 @@ revert() {
     awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN {printf "%.1f\n", b - a}'
 }
 
+# console [lines]: the end of its serial console, timed when it can be.
+console() {
+    if [ -s "$DIR/console.ts.log" ]; then
+        tail -n "${1:-100}" "$DIR/console.ts.log"
+    else
+        tail -n "${1:-100}" "$DIR/console.log"
+    fi
+}
+
+# boot_report: where the boot's time went, from inside: systemd's own
+# account of it, the chain of units middleware waited on, the slowest
+# units, and middleware's log of its own start. Over ssh, as the admin with
+# a key made here and sudo; those, and ssh, stay on afterwards.
+boot_report() {
+    running || die "no appliance running"
+    state
+    needs ssh openssh-client ssh-keygen openssh-client
+    local key="$DIR/report_key"
+    [ -f "$key" ] || ssh-keygen -q -t ed25519 -N '' -C appliance-boot-report -f "$key"
+    "${TNCTL[@]}" enable-ssh "$(url)" "$APPLIANCE_USER" "$APPLIANCE_PASSWORD_NOW" --pubkey "$(cat "$key.pub")" >&2
+    local port="${APPLIANCE_SSH_PORT:-2222}"
+    local -a ssh_
+    ssh_=(ssh -i "$key" -p "$port" -o BatchMode=yes -o ConnectTimeout=5
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+          "$APPLIANCE_USER@127.0.0.1")
+    local i
+    for i in $(seq 1 30); do
+        "${ssh_[@]}" true 2>/dev/null && break
+        [ "$i" = 30 ] && die "no ssh into the appliance on 127.0.0.1:$port"
+        sleep 2
+    done
+    "${ssh_[@]}" 'bash -s' <<'REPORT'
+section() { printf '\n=== %s\n' "$*"; }
+section "systemd-analyze"
+systemd-analyze || true
+section "the critical chain to middlewared"
+systemd-analyze critical-chain middlewared.service --no-pager || true
+section "the critical chain to the default target"
+systemd-analyze critical-chain --no-pager || true
+section "the 30 slowest units"
+systemd-analyze blame --no-pager | head -n 30 || true
+section "middlewared's unit, from the journal"
+sudo -n journalctl -b -o short-monotonic -u middlewared --no-pager | head -n 40 || true
+section "middlewared's log of its start"
+sudo -n head -n 150 /var/log/middlewared.log || true
+section "the kernel's command line"
+cat /proc/cmdline
+REPORT
+}
+
 # probe <baseline>: that revert works and what it costs. A group is made
 # over the API, the appliance reverted to <baseline>, and the group must
 # be gone; KEY=value on stdout.
@@ -242,7 +303,8 @@ probe)     shift; probe "$@" ;;
 snapshot)  shift; snapshot "$@" ;;
 revert)    shift; revert "$@" ;;
 snapshots) running || die "no appliance running"; hmp info snapshots ;;
-console)   tail -n "${2:-100}" "$DIR/console.log" ;;
+console)   console "${2:-100}" ;;
+boot-report) boot_report ;;
 stop)      if running; then "${TNCTL[@]}" qmp "$QMP" quit >/dev/null || true; fi ;;
-*)         die "usage: appliance.sh start | snapshot <name> | revert <name> | probe [baseline] | call <method> [params...] | snapshots | console [lines] | stop" ;;
+*)         die "usage: appliance.sh start | snapshot <name> | revert <name> | probe [baseline] | call <method> [params...] | boot-report | snapshots | console [lines] | stop" ;;
 esac
