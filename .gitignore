@@ -1,2 +1,3 @@
 # CI installs js-yaml into the workspace to run scripts/check-input-refs.js
 node_modules/
+__pycache__/
