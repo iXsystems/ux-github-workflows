@@ -50,7 +50,7 @@ inputs:
     description: '`true` enables ssh for the admin, on TN_SSH.'
     default: 'false'
   disk:
-    description: The appliance disk, if not the one the pool attached.
+    description: The appliance disk, if not the one the pool attached (found by its boot-pool).
     default: ''
   export-env:
     description: '`true` writes TN_* to the job environment, for suites that read them from there.'
@@ -103,6 +103,12 @@ runs:
         APPLIANCE_PASSWORD="$(head -c 15 /dev/urandom | base64 | tr -d '/+=')"
         echo "::add-mask::$APPLIANCE_PASSWORD"
         export APPLIANCE_PASSWORD
+        # On PATH before it starts, so that a failed start's console is
+        # there for a later step to show.
+        echo "APPLIANCE_DIR=$APPLIANCE_DIR" >> "$GITHUB_ENV"
+        mkdir -p "$RUNNER_TEMP/truenas-appliance-bin"
+        ln -sf "$lib/appliance.sh" "$RUNNER_TEMP/truenas-appliance-bin/truenas-appliance"
+        echo "$RUNNER_TEMP/truenas-appliance-bin" >> "$GITHUB_PATH"
         out="$("$lib/appliance.sh" start)"
         get() { sed -n "s/^$1=//p" <<<"$out"; }
         {
@@ -117,8 +123,4 @@ runs:
         if [ "$EXPORT_ENV" = true ]; then
           grep '^TN_' <<<"$out" >> "$GITHUB_ENV"
         fi
-        echo "APPLIANCE_DIR=$APPLIANCE_DIR" >> "$GITHUB_ENV"
-        mkdir -p "$RUNNER_TEMP/truenas-appliance-bin"
-        ln -sf "$lib/appliance.sh" "$RUNNER_TEMP/truenas-appliance-bin/truenas-appliance"
-        echo "$RUNNER_TEMP/truenas-appliance-bin" >> "$GITHUB_PATH"
         echo "Appliance $(get TN_DOMAIN) at $(get TN_HOST): API up in $(get APPLIANCE_BOOT_SECONDS)s, baseline '${APPLIANCE_BASELINE:-none}' in $(get APPLIANCE_SNAPSHOT_SECONDS)s"

@@ -24,8 +24,8 @@
 # Settings, environment variables, all optional:
 #
 #   APPLIANCE_DISK        the appliance's disk: a device or a qcow2/raw file
-#                         (default /dev/disk/by-id/virtio-truenas_appliance,
-#                         the disk the pool attached)
+#                         (default: the disk the pool attached, found by
+#                         attached_disk)
 #   APPLIANCE_DIR         its state: overlay, data disks, sockets, console
 #                         (default $RUNNER_TEMP/truenas-appliance)
 #   APPLIANCE_MEMORY_MB   6144       APPLIANCE_VCPUS        4
@@ -60,8 +60,34 @@ running() { [ -f "$DIR/qemu.pid" ] && kill -0 "$(cat "$DIR/qemu.pid")" 2>/dev/nu
 # shellcheck source=/dev/null
 state() { [ -r "$STATE" ] || die "no appliance started here ($STATE)"; . "$STATE"; }
 
+# attached_disk: the appliance disk the runner's pool attached. By its
+# serial when the box kept the one the provider gave it; TrueNAS gives
+# every VM disk a random serial of its own instead, so otherwise by what is
+# on it: the one disk, not the one / is on, that holds a ZFS pool named
+# boot-pool (a TrueNAS install).
+attached_disk() {
+    local serial=/dev/disk/by-id/virtio-truenas_appliance
+    [ -e "$serial" ] && { realpath "$serial"; return; }
+    lsblk -J -p -o NAME,PKNAME,FSTYPE,LABEL,MOUNTPOINT | python3 -c '
+import json, sys
+devs = []
+def walk(ds):
+    for d in ds:
+        devs.append(d)
+        walk(d.get("children") or [])
+walk(json.load(sys.stdin)["blockdevices"])
+root = {d["pkname"] for d in devs if d.get("mountpoint") == "/"}
+found = sorted({d["pkname"] for d in devs
+                if d.get("fstype") == "zfs_member" and d.get("label") == "boot-pool"
+                and d.get("pkname") and d["pkname"] not in root})
+if len(found) != 1:
+    sys.exit("found %d disks with a TrueNAS boot-pool: %s" % (len(found), " ".join(found) or "none"))
+print(found[0])
+'
+}
+
 start() {
-    local disk="${APPLIANCE_DISK:-/dev/disk/by-id/virtio-truenas_appliance}"
+    local disk="${APPLIANCE_DISK:-}"
     local memory="${APPLIANCE_MEMORY_MB:-6144}" vcpus="${APPLIANCE_VCPUS:-4}"
     local ndata="${APPLIANCE_DATA_DISKS:-10}" datagb="${APPLIANCE_DATA_DISK_GB:-10}"
     local http="${APPLIANCE_HTTP_PORT:-8080}" https="${APPLIANCE_HTTPS_PORT:-8443}" sshp="${APPLIANCE_SSH_PORT:-2222}"
@@ -78,11 +104,12 @@ start() {
     else
         cpu=max
     fi
-    if [ ! -e "$disk" ]; then
-        echo "appliance: no appliance disk at $disk. The disks this runner has:" >&2
-        ls -l /dev/disk/by-id/ >&2 || true
+    if [ -z "$disk" ] && ! disk="$(attached_disk)"; then
+        echo "appliance: no appliance disk attached to this runner. Its disks:" >&2
+        lsblk -p -o NAME,SIZE,SERIAL,FSTYPE,LABEL,MOUNTPOINT >&2 || true
         die "give the runner's pool {\"disks\": [\"truenas_appliance:nightly\"]} in its extra specs, or set APPLIANCE_DISK"
     fi
+    [ -e "$disk" ] || die "no appliance disk at $disk"
     disk="$(realpath "$disk")"
     # Read only: the appliance writes to an overlay of it.
     if [ ! -r "$disk" ]; then
