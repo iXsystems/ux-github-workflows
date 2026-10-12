@@ -523,6 +523,54 @@ What the runner has to provide, the timings, and the lessons behind every rule
 in the script are in `truenas/webui`'s `e2e/docs/05-ci.md`, which is where
 this was built and first used.
 
+### `.github/actions/truenas-appliance-runner`
+
+The other way to give a job an appliance, being prototyped: **the appliance
+is inside the runner**. The job runs on an ephemeral GARM runner from
+`iXsystems/github-truenas-runner`'s TrueNAS provider, whose pool attaches a
+copy-on-write clone of a prebuilt TrueNAS image as a second disk; this
+action boots that disk under qemu, inside the runner, rotates its admin
+password, snapshots it as `fresh-install`, and exports the suite's `TN_*`
+variables as the claim above does, less `TN_GUEST_ISO` (the appliance is an
+image, not an ISO), and with `TN_SSH` when `ssh` is `true`. There is nothing to claim and nothing to
+release: picking the runner label is the claim, and GARM deleting the
+runner is the release. Capacity is the pool's size; jobs queue for a runner
+instead of a concurrency group, and sharding is a matrix.
+
+```yaml
+jobs:
+  e2e:
+    runs-on: [self-hosted, truenas-appliance]
+    steps:
+      - uses: iXsystems/ux-github-workflows/.github/actions/truenas-appliance-runner@master
+        id: appliance
+      - run: yarn e2e
+      # between tests, back to the baseline in seconds, memory included:
+      - run: truenas-appliance revert fresh-install
+```
+
+| Input | Default | Notes |
+|---|---|---|
+| `baseline` | `fresh-install` | Snapshot (`savevm`) taken once it is up; empty takes none |
+| `memory-mb`, `vcpus` | `6144`, `4` | The appliance's; the runner's flavor needs room for it and the job |
+| `data-disk-count`, `data-disk-gb` | `10`, `10` | Sparse qcow2 files |
+| `ssh` | `'false'` | `true` enables ssh for the admin, on `TN_SSH` |
+| `disk` | the attached one | Found by its serial, `virtio-truenas_appliance`, where the box keeps it; TrueNAS replaces it, so otherwise the one disk besides the root disk that holds a ZFS `boot-pool` |
+| `export-env` | `'true'` | Write `TN_*` to the job environment |
+
+Outputs: `host`, `host-http`, `username`, `password` (masked), `ssh`,
+`boot-seconds`, `snapshot-seconds`. `truenas-appliance` is put on `PATH`:
+`snapshot <name>`, `revert <name>`, `call <method> [params...]`,
+`snapshots`, `console [lines]`, `probe`.
+
+These scripts are the one copy. github-truenas-runner's image pipeline
+fetches them from here, at the last commit that changed this directory, to
+install the appliance image from the nightly ISO and test-boot it the way a
+runner will; a change here is therefore a new appliance image there. What
+the two must agree on, the admin the image is built with and how qemu boots
+it, is `lib.sh`. The design, the pool setup and the numbers to measure are
+in github-truenas-runner's `docs/e2e-appliances.md`.
+
 ## Adoption status
 
 | Repo | `check-ticket` | `pr-title` | `check-member` | `prepare` | review |

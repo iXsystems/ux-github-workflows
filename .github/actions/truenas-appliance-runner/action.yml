@@ -1,0 +1,126 @@
+name: TrueNAS appliance
+description: >-
+  Boot the TrueNAS appliance attached to this runner under qemu, and hand
+  the job its address and a credential of its own. The appliance lives
+  and dies with the runner, so there is nothing to release.
+
+# The runner comes from a GARM pool on a TrueNAS box whose extra specs
+# attach the appliance's disk:
+#
+#   {"disks": ["truenas_appliance:nightly"]}
+#
+# and whose flavor has room for it beside the job (the appliance's memory,
+# 6 GB by default, plus the browser and the build). The pool, the provider
+# and the appliance image are iXsystems/github-truenas-runner's (its
+# docs/e2e-appliances.md).
+#
+# These scripts are the one copy: that repository's image build fetches
+# them from here, at the last commit that changed this directory, to
+# install the appliance image and test-boot it. A change here is a new
+# appliance image there. What the two sides share is in lib.sh.
+#
+# Usage:
+#   - uses: iXsystems/ux-github-workflows/.github/actions/truenas-appliance-runner@master
+#     id: appliance
+#   - run: curl -sk "https://$TN_HOST/api/v2.0/system/info" -u "$TN_USERNAME:$TN_PASSWORD"
+#   # between tests, back to the baseline in seconds:
+#   - run: truenas-appliance revert fresh-install
+#
+# The TN_* variables are the e2e suite's contract, as the lab's claim
+# action sets them; truenas-appliance (appliance.sh) is on PATH for
+# snapshot, revert, probe, call and console.
+
+inputs:
+  baseline:
+    description: Snapshot taken once the appliance is up, to revert to between tests. Empty takes none.
+    default: fresh-install
+  memory-mb:
+    description: Appliance memory.
+    default: '6144'
+  vcpus:
+    description: Appliance vCPUs.
+    default: '4'
+  data-disk-count:
+    description: Data disks, sparse.
+    default: '10'
+  data-disk-gb:
+    description: Size of each data disk.
+    default: '10'
+  ssh:
+    description: '`true` enables ssh for the admin, on TN_SSH.'
+    default: 'false'
+  disk:
+    description: The appliance disk, if not the one the pool attached (found by its boot-pool).
+    default: ''
+  export-env:
+    description: '`true` writes TN_* to the job environment, for suites that read them from there.'
+    default: 'true'
+
+outputs:
+  host:
+    description: host:port of the appliance over https.
+    value: ${{ steps.start.outputs.host }}
+  host-http:
+    description: host:port of the appliance over http.
+    value: ${{ steps.start.outputs.host-http }}
+  username:
+    description: Admin user.
+    value: ${{ steps.start.outputs.username }}
+  password:
+    description: Admin password, made for this job and masked.
+    value: ${{ steps.start.outputs.password }}
+  ssh:
+    description: host:port of its ssh, when asked for.
+    value: ${{ steps.start.outputs.ssh }}
+  boot-seconds:
+    description: From qemu starting to the API taking a login.
+    value: ${{ steps.start.outputs.boot-seconds }}
+  snapshot-seconds:
+    description: What taking the baseline took.
+    value: ${{ steps.start.outputs.snapshot-seconds }}
+
+runs:
+  using: composite
+  steps:
+    - id: start
+      shell: bash
+      env:
+        APPLIANCE_BASELINE: ${{ inputs.baseline }}
+        APPLIANCE_MEMORY_MB: ${{ inputs.memory-mb }}
+        APPLIANCE_VCPUS: ${{ inputs.vcpus }}
+        APPLIANCE_DATA_DISKS: ${{ inputs.data-disk-count }}
+        APPLIANCE_DATA_DISK_GB: ${{ inputs.data-disk-gb }}
+        APPLIANCE_SSH: ${{ inputs.ssh }}
+        APPLIANCE_DISK_INPUT: ${{ inputs.disk }}
+        EXPORT_ENV: ${{ inputs.export-env }}
+      run: |
+        set -euo pipefail
+        lib="$GITHUB_ACTION_PATH"
+        [ -n "$APPLIANCE_DISK_INPUT" ] && export APPLIANCE_DISK="$APPLIANCE_DISK_INPUT"
+        export APPLIANCE_DIR="$RUNNER_TEMP/truenas-appliance"
+        # The password is made here, so it is masked before anything can
+        # print it.
+        APPLIANCE_PASSWORD="$(head -c 15 /dev/urandom | base64 | tr -d '/+=')"
+        echo "::add-mask::$APPLIANCE_PASSWORD"
+        export APPLIANCE_PASSWORD
+        # On PATH before it starts, so that a failed start's console is
+        # there for a later step to show.
+        echo "APPLIANCE_DIR=$APPLIANCE_DIR" >> "$GITHUB_ENV"
+        mkdir -p "$RUNNER_TEMP/truenas-appliance-bin"
+        ln -sf "$lib/appliance.sh" "$RUNNER_TEMP/truenas-appliance-bin/truenas-appliance"
+        echo "$RUNNER_TEMP/truenas-appliance-bin" >> "$GITHUB_PATH"
+        out="$("$lib/appliance.sh" start)"
+        get() { sed -n "s/^$1=//p" <<<"$out"; }
+        {
+          echo "host=$(get TN_HOST)"
+          echo "host-http=$(get TN_HOST_HTTP)"
+          echo "username=$(get TN_USERNAME)"
+          echo "password=$(get TN_PASSWORD)"
+          echo "ssh=$(get TN_SSH)"
+          echo "boot-seconds=$(get APPLIANCE_BOOT_SECONDS)"
+          echo "snapshot-seconds=$(get APPLIANCE_SNAPSHOT_SECONDS)"
+        } >> "$GITHUB_OUTPUT"
+        if [ "$EXPORT_ENV" = true ]; then
+          grep '^TN_' <<<"$out" >> "$GITHUB_ENV"
+        fi
+        echo "Appliance $(get TN_DOMAIN) at $(get TN_HOST): API up in $(get APPLIANCE_BOOT_SECONDS)s, baseline '${APPLIANCE_BASELINE:-none}' in $(get APPLIANCE_SNAPSHOT_SECONDS)s"
