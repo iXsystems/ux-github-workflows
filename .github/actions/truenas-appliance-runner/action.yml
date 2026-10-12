@@ -110,6 +110,11 @@ runs:
         ln -sf "$lib/appliance.sh" "$RUNNER_TEMP/truenas-appliance-bin/truenas-appliance"
         echo "$RUNNER_TEMP/truenas-appliance-bin" >> "$GITHUB_PATH"
         out="$("$lib/appliance.sh" start)"
+        # Folded: the boot as the appliance's console saw it, on the same
+        # clock as the milestones logged above.
+        echo "::group::The appliance's console during its boot (seconds since qemu started)"
+        cat "$APPLIANCE_DIR/console.ts.log" 2>/dev/null || echo "(no console)"
+        echo "::endgroup::"
         get() { sed -n "s/^$1=//p" <<<"$out"; }
         {
           echo "host=$(get TN_HOST)"
