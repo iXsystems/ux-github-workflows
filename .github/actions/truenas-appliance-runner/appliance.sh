@@ -262,6 +262,9 @@ boot_report() {
     done
     "${ssh_[@]}" 'bash -s' <<'REPORT'
 section() { printf '\n=== %s\n' "$*"; }
+cpu_seconds() {
+    awk -v hz="$(getconf CLK_TCK)" '/^cpu / {printf "user %.0f  system %.0f  idle %.0f  iowait %.0f  steal %.0f\n", ($2 + $3) / hz, $4 / hz, $5 / hz, $6 / hz, $9 / hz}' /proc/stat
+}
 section "systemd-analyze"
 systemd-analyze || true
 section "the critical chain to middlewared"
@@ -282,7 +285,24 @@ sudo -n dmesg |
     awk -F'[][]' 'NF > 2 {t = $2 + 0; if (seen && t - p >= 0.5) printf "%6.1fs before [%8.3f] %s\n", t - p, t, substr($3, 1, 150); p = t; seen = 1}' || true
 section "the kernel's command line"
 cat /proc/cmdline
+section "where the guest's CPU time went since boot, in seconds"
+cpu_seconds
+section "the guest's clocksource"
+cat /sys/devices/system/clocksource/clocksource0/current_clocksource
 REPORT
+    echo
+    echo "=== the runner the appliance runs on"
+    echo "$(nproc) vCPUs, load $(cut -d' ' -f1-3 /proc/loadavg), $(free -m | awk '/^Mem:/ {print $2 " MB, " $7 " MB available"}')"
+    echo "Its CPU time since it booted, in seconds (steal is time its own host held its vCPUs back):"
+    cpu_seconds
+}
+
+# cpu_seconds: /proc/stat's CPU line in seconds. Steal is time the
+# hypervisor kept this machine's vCPUs from running; iowait is time spent
+# waiting for disks. Defined here and in the report's script on the
+# appliance alike.
+cpu_seconds() {
+    awk -v hz="$(getconf CLK_TCK)" '/^cpu / {printf "user %.0f  system %.0f  idle %.0f  iowait %.0f  steal %.0f\n", ($2 + $3) / hz, $4 / hz, $5 / hz, $6 / hz, $9 / hz}' /proc/stat
 }
 
 # probe <baseline>: that revert works and what it costs. A group is made
