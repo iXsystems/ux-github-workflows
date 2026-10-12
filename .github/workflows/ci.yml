@@ -153,6 +153,26 @@ jobs:
                      sed -E 's/^\{\{file:(.*)\}\}$/\1/' | sort -u)
           exit "$missing"
 
+  # The runner-side appliance action's scripts. Nothing in this repo runs
+  # them, and github-truenas-runner's appliance image build fetches them
+  # from master: a broken one is a failed image build there, or an e2e job
+  # that cannot boot its appliance.
+  appliance-runner:
+    name: Check the appliance runner scripts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .github/actions/truenas-appliance-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: tnctl against a fake installer, middleware and QMP
+        run: python3 test_tnctl.py
+
+      - name: shellcheck
+        run: shellcheck -x appliance.sh lib.sh
+
   # Smoke test: this repo calls its own reusable workflow, so a change to
   # check-member.yml is executed before it can be merged rather than after.
   #
