@@ -56,6 +56,22 @@ vars_qcow2() {
     qemu-img convert -q -f raw -O qcow2 "$OVMF_VARS" "$1"
 }
 
+# skip_grub <console log> <qmp socket>: TrueNAS's GRUB menu waits ten
+# seconds for a key on every boot, a sixth of the whole boot. This is the
+# key: Enter, through qemu's monitor, once the menu is on the console. In
+# the background, for up to a minute; the boot goes on regardless.
+skip_grub() {
+    (
+        for _ in $(seq 1 300); do
+            if grep -aq "Press enter to boot" "$1" 2>/dev/null; then
+                "${TNCTL[@]}" qmp "$2" send-key '{"keys": [{"type": "qcode", "data": "ret"}]}' >/dev/null 2>&1
+                exit 0
+            fi
+            sleep 0.2
+        done
+    ) >/dev/null 2>&1 &
+}
+
 # binds: where the appliance's forwarded ports listen. This machine's
 # loopback, and Docker's bridge when there is one, so that a container
 # reaches it as host.docker.internal; never the runner's network.

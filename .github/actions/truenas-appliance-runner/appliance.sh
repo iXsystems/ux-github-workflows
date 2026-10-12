@@ -155,6 +155,7 @@ start() {
     # long as qemu runs: the boot's milestones below are on the same clock.
     nohup "${TNCTL[@]}" tail-ts "$DIR/console.log" "$DIR/console.ts.log" \
         --since "$t0" --pid "$(cat "$DIR/qemu.pid")" >/dev/null 2>&1 &
+    skip_grub "$DIR/console.log" "$QMP"
 
     if ! booted=$("${TNCTL[@]}" wait "$(url)" "$APPLIANCE_USER" "$APPLIANCE_TEMPLATE_PASSWORD" \
             --since "$t0" --timeout "${APPLIANCE_BOOT_TIMEOUT:-900}"); then
@@ -271,8 +272,14 @@ section "the 30 slowest units"
 systemd-analyze blame --no-pager | head -n 30 || true
 section "middlewared's unit, from the journal"
 sudo -n journalctl -b -o short-monotonic -u middlewared --no-pager | head -n 40 || true
-section "middlewared's log of its start"
-sudo -n head -n 150 /var/log/middlewared.log || true
+section "middlewared's log of this boot's start"
+sudo -n awk '/ - Starting TrueNAS/ {n = 0; delete buf} {buf[++n] = $0} END {for (i = 1; i <= n && i <= 120; i++) print buf[i]}' /var/log/middlewared.log || true
+section "the journal's pauses over a second (kernel, initrd, userspace)"
+sudo -n journalctl -b -o short-monotonic --no-pager |
+    awk -F'[][]' 'NF > 2 {t = $2 + 0; if (seen && t - p >= 1) printf "%6.1fs before [%8.3f] %s\n", t - p, t, substr($3, 1, 150); p = t; seen = 1}' || true
+section "the kernel's own pauses over half a second"
+sudo -n dmesg |
+    awk -F'[][]' 'NF > 2 {t = $2 + 0; if (seen && t - p >= 0.5) printf "%6.1fs before [%8.3f] %s\n", t - p, t, substr($3, 1, 150); p = t; seen = 1}' || true
 section "the kernel's command line"
 cat /proc/cmdline
 REPORT
