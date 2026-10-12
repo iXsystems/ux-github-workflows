@@ -159,25 +159,36 @@ class TestTnctl(unittest.TestCase):
         seen = []
 
         def serve():
-            conn, _ = srv.accept()
-            f = conn.makefile("rwb")
-            f.write(b'{"QMP": {"version": {}}}\n')
-            f.flush()
-            for line in f:
-                msg = json.loads(line)
-                seen.append(msg)
-                f.write(b'{"event": "STOP"}\n')
-                out = {"return": {}}
-                if msg["execute"] == "human-monitor-command":
-                    out = {"return": "Error: no snapshot" if "nope" in msg["arguments"]["command-line"] else ""}
-                f.write(json.dumps(out).encode() + b"\n")
+            # One connection per call, as tnctl makes them.
+            while True:
+                try:
+                    conn, _ = srv.accept()
+                except OSError:
+                    return
+                f = conn.makefile("rwb")
+                f.write(b'{"QMP": {"version": {}}}\n')
                 f.flush()
-            conn.close()
+                for line in f:
+                    msg = json.loads(line)
+                    seen.append(msg)
+                    f.write(b'{"event": "STOP"}\n')
+                    out = {"return": {}}
+                    if msg["execute"] == "human-monitor-command":
+                        out = {"return": "Error: no snapshot" if "nope" in msg["arguments"]["command-line"] else ""}
+                    f.write(json.dumps(out).encode() + b"\n")
+                    f.flush()
+                conn.close()
 
         threading.Thread(target=serve, daemon=True).start()
         self.addCleanup(srv.close)
         self.assertEqual(tnctl.qmp(path, "human-monitor-command", {"command-line": "savevm fresh-install"}), "")
         self.assertEqual([m["execute"] for m in seen], ["qmp_capabilities", "human-monitor-command"])
+        # HMP reports its own failures as text: cmd_hmp has to turn one into
+        # a non-zero exit, or revert would take a missing snapshot as done.
+        tnctl.cmd_hmp(args(socket=path, line="savevm fresh-install"))
+        with self.assertRaises(SystemExit) as e:
+            tnctl.cmd_hmp(args(socket=path, line="loadvm nope"))
+        self.assertEqual(e.exception.code, 1)
 
 
 if __name__ == "__main__":
