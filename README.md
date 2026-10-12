@@ -530,8 +530,9 @@ is inside the runner**. The job runs on an ephemeral GARM runner from
 `iXsystems/github-truenas-runner`'s TrueNAS provider, whose pool attaches a
 copy-on-write clone of a prebuilt TrueNAS image as a second disk; this
 action boots that disk under qemu, inside the runner, rotates its admin
-password, snapshots it as `fresh-install`, and exports the same `TN_*`
-variables as the claim above. There is nothing to claim and nothing to
+password, snapshots it as `fresh-install`, and exports the suite's `TN_*`
+variables as the claim above does, less `TN_GUEST_ISO` (the appliance is an
+image, not an ISO), and with `TN_SSH` when `ssh` is `true`. There is nothing to claim and nothing to
 release: picking the runner label is the claim, and GARM deleting the
 runner is the release. Capacity is the pool's size; jobs queue for a runner
 instead of a concurrency group, and sharding is a matrix.
@@ -554,7 +555,7 @@ jobs:
 | `memory-mb`, `vcpus` | `6144`, `4` | The appliance's; the runner's flavor needs room for it and the job |
 | `data-disk-count`, `data-disk-gb` | `10`, `10` | Sparse qcow2 files |
 | `ssh` | `'false'` | `true` enables ssh for the admin, on `TN_SSH` |
-| `disk` | the attached one | `/dev/disk/by-id/virtio-truenas_appliance` by default |
+| `disk` | the attached one | Found by its serial, `virtio-truenas_appliance`, where the box keeps it; TrueNAS replaces it, so otherwise the one disk besides the root disk that holds a ZFS `boot-pool` |
 | `export-env` | `'true'` | Write `TN_*` to the job environment |
 
 Outputs: `host`, `host-http`, `username`, `password` (masked), `ssh`,

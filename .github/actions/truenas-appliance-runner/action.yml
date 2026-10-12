@@ -116,7 +116,7 @@ runs:
           echo "host-http=$(get TN_HOST_HTTP)"
           echo "username=$(get TN_USERNAME)"
           echo "password=$(get TN_PASSWORD)"
-          echo "ssh=$( [ "$APPLIANCE_SSH" = true ] && get TN_SSH || true)"
+          echo "ssh=$(get TN_SSH)"
           echo "boot-seconds=$(get APPLIANCE_BOOT_SECONDS)"
           echo "snapshot-seconds=$(get APPLIANCE_SNAPSHOT_SECONDS)"
         } >> "$GITHUB_OUTPUT"

@@ -41,10 +41,12 @@
 #
 # start prints TN_PROFILE, TN_HOST (host:https port), TN_HOST_HTTP,
 # TN_USERNAME, TN_PASSWORD, TN_DOMAIN, TN_BASELINE (the suite's contract,
-# as the lab's claim action gives it), TN_SSH, and what it measured:
+# as the lab's claim action gives it, less its TN_GUEST_ISO), TN_SSH when
+# APPLIANCE_SSH is true, and what it measured:
 # APPLIANCE_BOOT_SECONDS, APPLIANCE_SNAPSHOT_SECONDS.
 
 set -euo pipefail
+# shellcheck source=lib.sh
 . "$(dirname "$(realpath "$0")")/lib.sh"
 
 DIR="${APPLIANCE_DIR:-${RUNNER_TEMP:-/tmp}/truenas-appliance}"
@@ -178,10 +180,14 @@ TN_USERNAME=$APPLIANCE_USER
 TN_PASSWORD=$password
 TN_DOMAIN=$name
 TN_BASELINE=${baseline:-none}
-TN_SSH=127.0.0.1:$sshp
 APPLIANCE_BOOT_SECONDS=$booted
 APPLIANCE_SNAPSHOT_SECONDS=$snapped
 EOF
+    # Only when it is there to use: a suite may take TN_SSH being set to
+    # mean it can ssh in.
+    if [ "${APPLIANCE_SSH:-false}" = true ]; then
+        echo "TN_SSH=127.0.0.1:$sshp"
+    fi
 }
 
 snapshot() {
@@ -237,6 +243,6 @@ snapshot)  shift; snapshot "$@" ;;
 revert)    shift; revert "$@" ;;
 snapshots) running || die "no appliance running"; hmp info snapshots ;;
 console)   tail -n "${2:-100}" "$DIR/console.log" ;;
-stop)      running && "${TNCTL[@]}" qmp "$QMP" quit >/dev/null || true ;;
+stop)      if running; then "${TNCTL[@]}" qmp "$QMP" quit >/dev/null || true; fi ;;
 *)         die "usage: appliance.sh start | snapshot <name> | revert <name> | probe [baseline] | call <method> [params...] | snapshots | console [lines] | stop" ;;
 esac
