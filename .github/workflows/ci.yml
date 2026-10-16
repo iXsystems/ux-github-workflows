@@ -171,7 +171,7 @@ jobs:
         run: python3 test_tnctl.py
 
       - name: shellcheck
-        run: shellcheck -x appliance.sh lib.sh
+        run: shellcheck -x appliance.sh ha.sh lib.sh
 
   # Smoke test: this repo calls its own reusable workflow, so a change to
   # check-member.yml is executed before it can be merged rather than after.

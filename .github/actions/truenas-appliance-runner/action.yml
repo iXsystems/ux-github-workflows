@@ -29,10 +29,26 @@ description: >-
 # The TN_* variables are the e2e suite's contract, as the lab's claim
 # action sets them; truenas-appliance (appliance.sh) is on PATH for
 # snapshot, revert, probe, call and console.
+#
+# `ha: true` boots an HA pair instead (ha.sh): two appliances, from a pool
+# that attaches the appliance disk twice,
+#
+#   {"disks": ["truenas_appliance:nightly", "truenas_appliance:nightly"]}
+#
+# wired as middleware needs an HA pair's hardware, and handed over
+# unconfigured: licensing, the VIP, a pool and failover are the suite's to
+# set up. TN_HOST is node A, and TN_HA_* carry the addresses that setup
+# needs. No baseline: a pair's shared disks cannot be snapshotted with it.
+# truenas-appliance (ha.sh) is on PATH for call, ssh and console, each
+# taking the node, a or b. Each node takes memory-mb and vcpus, and
+# data-disk-count is the disks the two share.
 
 inputs:
+  ha:
+    description: '`true` boots an HA pair instead of one appliance: see ha.sh.'
+    default: 'false'
   baseline:
-    description: Snapshot taken once the appliance is up, to revert to between tests. Empty takes none.
+    description: Snapshot taken once the appliance is up, to revert to between tests. Empty takes none. Not taken for an HA pair.
     default: fresh-install
   memory-mb:
     description: Appliance memory.
@@ -93,6 +109,7 @@ runs:
         APPLIANCE_SSH: ${{ inputs.ssh }}
         APPLIANCE_DISK_INPUT: ${{ inputs.disk }}
         EXPORT_ENV: ${{ inputs.export-env }}
+        HA: ${{ inputs.ha }}
       run: |
         set -euo pipefail
         lib="$GITHUB_ACTION_PATH"
@@ -106,15 +123,19 @@ runs:
         # On PATH before it starts, so that a failed start's console is
         # there for a later step to show.
         echo "APPLIANCE_DIR=$APPLIANCE_DIR" >> "$GITHUB_ENV"
+        script=appliance.sh
+        [ "$HA" = true ] && script=ha.sh
         mkdir -p "$RUNNER_TEMP/truenas-appliance-bin"
-        ln -sf "$lib/appliance.sh" "$RUNNER_TEMP/truenas-appliance-bin/truenas-appliance"
+        ln -sf "$lib/$script" "$RUNNER_TEMP/truenas-appliance-bin/truenas-appliance"
         echo "$RUNNER_TEMP/truenas-appliance-bin" >> "$GITHUB_PATH"
-        out="$("$lib/appliance.sh" start)"
-        # Folded: the boot as the appliance's console saw it, on the same
-        # clock as the milestones logged above.
-        echo "::group::The appliance's console during its boot (seconds since qemu started)"
-        cat "$APPLIANCE_DIR/console.ts.log" 2>/dev/null || echo "(no console)"
-        echo "::endgroup::"
+        out="$("$lib/$script" start)"
+        if [ "$HA" != true ]; then
+          # Folded: the boot as the appliance's console saw it, on the same
+          # clock as the milestones logged above.
+          echo "::group::The appliance's console during its boot (seconds since qemu started)"
+          cat "$APPLIANCE_DIR/console.ts.log" 2>/dev/null || echo "(no console)"
+          echo "::endgroup::"
+        fi
         get() { sed -n "s/^$1=//p" <<<"$out"; }
         {
           echo "host=$(get TN_HOST)"
