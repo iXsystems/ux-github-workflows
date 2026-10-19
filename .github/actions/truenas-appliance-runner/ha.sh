@@ -232,14 +232,24 @@ unique() {
         head -c 16 /dev/urandom | od -An -tx1 | tr -d " \n" | sudo tee /etc/machine-id >/dev/null
         sudo rm -f /var/lib/dbus/machine-id
         sudo zgenhostid -f'
+    local boot now deadline
+    boot="$(ssh_ b cat /proc/sys/kernel/random/boot_id)"
     ssh_ b 'sudo systemctl reboot' || true
-    # Down before it is waited for: the API answers for a while after the
-    # reboot is asked for.
-    local i
-    for i in $(seq 1 60); do
-        ssh_ b true 2>/dev/null || break
-        sleep 2
+    # Back once B answers ssh from a new boot. Neither "ssh stopped answering"
+    # nor "the API answers" proves that: the API answers for a while after the
+    # reboot is asked for, and on the new boot it can answer before sshd does
+    # (run 39251437564 read B's ids over ssh and was refused).
+    # A refused or timed-out connection (sshd not started yet, the network
+    # not up) is just tried again.
+    deadline=$((SECONDS + 600))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        now="$(ssh_ b cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || now=
+        [ -n "$now" ] && [ "$now" != "$boot" ] && break
+        sleep 5
     done
+    if [ -z "$now" ] || [ "$now" = "$boot" ]; then
+        die "node B did not come back over ssh from its reboot within 10 minutes"
+    fi
     "${TNCTL[@]}" wait "ws://${IP[b]}" "$APPLIANCE_USER" "$password" --timeout 600 >/dev/null
     b="$(ids b)"
     [ "$a" != "$b" ] || die "node B still has A's ids after its reboot: $b"
