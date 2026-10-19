@@ -241,17 +241,25 @@ unique() {
     # (run 39251437564 read B's ids over ssh and was refused).
     # A refused or timed-out connection (sshd not started yet, the network
     # not up) is just tried again.
+    #
+    # B's ids are read in the same call that sees the new boot, not in another
+    # one after it: sshd answering once does not mean it stays up. Middleware
+    # applies its own SSH settings as it starts and restarts sshd, and in run
+    # 39296815434 a later read was refused after this loop had seen the boot.
+    local out
     deadline=$((SECONDS + 600))
     while [ "$SECONDS" -lt "$deadline" ]; do
-        now="$(ssh_ b cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || now=
+        # shellcheck disable=SC2016 # expanded on the node
+        out="$(ssh_ b 'echo "$(cat /proc/sys/kernel/random/boot_id) $(cat /etc/machine-id) $(hostid)"' 2>/dev/null)" || out=
+        now="${out%% *}"
         [ -n "$now" ] && [ "$now" != "$boot" ] && break
         sleep 5
     done
     if [ -z "$now" ] || [ "$now" = "$boot" ]; then
         die "node B did not come back over ssh from its reboot within 10 minutes"
     fi
+    b="${out#* }"
     "${TNCTL[@]}" wait "ws://${IP[b]}" "$APPLIANCE_USER" "$password" --timeout 600 >/dev/null
-    b="$(ids b)"
     [ "$a" != "$b" ] || die "node B still has A's ids after its reboot: $b"
     say "node B now has $b"
 }
