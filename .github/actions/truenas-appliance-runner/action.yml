@@ -62,6 +62,13 @@ inputs:
   data-disk-gb:
     description: Size of each data disk.
     default: '10'
+  extra-disk-gb:
+    description: >-
+      More sparse disks after the data disks, one per size in GB, separated
+      by spaces: '32' adds one 32 GB disk, '12 12 15' three. For what ten
+      alike cannot give, such as a disk big enough to mirror the boot pool
+      onto. Not for an HA pair.
+    default: ''
   ssh:
     description: '`true` enables ssh for the admin, on TN_SSH.'
     default: 'false'
@@ -106,6 +113,7 @@ runs:
         APPLIANCE_VCPUS: ${{ inputs.vcpus }}
         APPLIANCE_DATA_DISKS: ${{ inputs.data-disk-count }}
         APPLIANCE_DATA_DISK_GB: ${{ inputs.data-disk-gb }}
+        APPLIANCE_EXTRA_DISK_GB: ${{ inputs.extra-disk-gb }}
         APPLIANCE_SSH: ${{ inputs.ssh }}
         APPLIANCE_DISK_INPUT: ${{ inputs.disk }}
         EXPORT_ENV: ${{ inputs.export-env }}
@@ -114,6 +122,12 @@ runs:
         set -euo pipefail
         lib="$GITHUB_ACTION_PATH"
         [ -n "$APPLIANCE_DISK_INPUT" ] && export APPLIANCE_DISK="$APPLIANCE_DISK_INPUT"
+        # ha.sh would ignore it, and a suite would then skip whatever
+        # wanted the disks without saying why.
+        if [ "$HA" = true ] && [ -n "$APPLIANCE_EXTRA_DISK_GB" ]; then
+          echo "::error::extra-disk-gb is for one appliance; an HA pair has only the data-disk-count disks its nodes share"
+          exit 1
+        fi
         export APPLIANCE_DIR="$RUNNER_TEMP/truenas-appliance"
         # The password is made here, so it is masked before anything can
         # print it.
