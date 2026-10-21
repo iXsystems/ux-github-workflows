@@ -35,6 +35,8 @@
 #                         (default $RUNNER_TEMP/truenas-appliance)
 #   APPLIANCE_MEMORY_MB   6144       APPLIANCE_VCPUS        4
 #   APPLIANCE_DATA_DISKS  10         APPLIANCE_DATA_DISK_GB 10 (sparse)
+#   APPLIANCE_EXTRA_DISK_GB  more sparse disks after those, one per size in
+#                         GB, space-separated: "32", "12 12 15" (default none)
 #   APPLIANCE_HTTP_PORT   8080       APPLIANCE_HTTPS_PORT   8443
 #   APPLIANCE_SSH_PORT    2222       APPLIANCE_SSH          false
 #   APPLIANCE_BASELINE    fresh-install: the snapshot start takes; empty
@@ -97,12 +99,18 @@ start() {
     local disk="${APPLIANCE_DISK:-}"
     local memory="${APPLIANCE_MEMORY_MB:-6144}" vcpus="${APPLIANCE_VCPUS:-4}"
     local ndata="${APPLIANCE_DATA_DISKS:-10}" datagb="${APPLIANCE_DATA_DISK_GB:-10}"
+    local extragb=()
+    read -r -a extragb <<< "${APPLIANCE_EXTRA_DISK_GB:-}"
     local http="${APPLIANCE_HTTP_PORT:-8080}" https="${APPLIANCE_HTTPS_PORT:-8443}" sshp="${APPLIANCE_SSH_PORT:-2222}"
     local baseline="${APPLIANCE_BASELINE-fresh-install}"
     local password="${APPLIANCE_PASSWORD:-$(head -c 15 /dev/urandom | base64 | tr -d '/+=')}"
     local name="appliance-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${GITHUB_JOB:-job}"
 
     running && die "an appliance is running already ($DIR)"
+    local gb
+    for gb in "${extragb[@]}"; do
+        [[ "$gb" =~ ^[1-9][0-9]*$ ]] || die "APPLIANCE_EXTRA_DISK_GB: \"$gb\" is not a whole number of GB"
+    done
     needs qemu-system-x86_64 qemu-system-x86 qemu-img qemu-utils python3 python3
     ovmf
     local accel="${APPLIANCE_ACCEL:-kvm}" cpu=host
@@ -135,9 +143,23 @@ start() {
         drives+=(-drive "file=$DIR/data$i.qcow2,if=none,id=data$i,format=qcow2,discard=unmap"
                  -device "virtio-blk-pci,drive=data$i,serial=data$i")
     done
+    # After the data disks, so a suite that takes the first unused disks
+    # still gets data disks, all of one size.
+    local nextra=0
+    for gb in "${extragb[@]}"; do
+        nextra=$((nextra + 1))
+        qemu-img create -q -f qcow2 "$DIR/extra$nextra.qcow2" "${gb}G"
+        drives+=(-drive "file=$DIR/extra$nextra.qcow2,if=none,id=extra$nextra,format=qcow2,discard=unmap"
+                 -device "virtio-blk-pci,drive=extra$nextra,serial=extra$nextra")
+    done
+    local extrasaid=""
+    if [ "$nextra" -gt 0 ]; then
+        extrasaid=", and $nextra more of $(printf '%sG ' "${extragb[@]}")"
+        extrasaid="${extrasaid% }"
+    fi
 
     local booted t0
-    say "booting $disk as $name: ${memory} MB, $vcpus vCPUs, $ndata data disks of ${datagb}G"
+    say "booting $disk as $name: ${memory} MB, $vcpus vCPUs, $ndata data disks of ${datagb}G$extrasaid"
     t0=$(date +%s.%N)
     qemu-system-x86_64 -name "$name" -machine "q35,accel=$accel" -cpu "$cpu" -smp "$vcpus" -m "$memory" \
         -smbios "type=1,serial=$name" \

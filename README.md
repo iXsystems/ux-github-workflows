@@ -554,6 +554,7 @@ jobs:
 | `baseline` | `fresh-install` | Snapshot (`savevm`) taken once it is up; empty takes none |
 | `memory-mb`, `vcpus` | `6144`, `4` | The appliance's; the runner's flavor needs room for it and the job |
 | `data-disk-count`, `data-disk-gb` | `10`, `10` | Sparse qcow2 files |
+| `extra-disk-gb` | none | More sparse disks after the data disks, one per size in GB: `'32'`, `'12 12 15'`. Not for an HA pair |
 | `ssh` | `'false'` | `true` enables ssh for the admin, on `TN_SSH` |
 | `disk` | the attached one | Found by its serial, `virtio-truenas_appliance`, where the box keeps it; TrueNAS replaces it, so otherwise the one disk besides the root disk that holds a ZFS `boot-pool` |
 | `export-env` | `'true'` | Write `TN_*` to the job environment |
