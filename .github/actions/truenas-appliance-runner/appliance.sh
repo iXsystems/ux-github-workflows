@@ -37,6 +37,10 @@
 #   APPLIANCE_DATA_DISKS  10         APPLIANCE_DATA_DISK_GB 10 (sparse)
 #   APPLIANCE_EXTRA_DISK_GB  more sparse disks after those, one per size in
 #                         GB, space-separated: "32", "12 12 15" (default none)
+#   APPLIANCE_SPARE_NICS  0: NICs after the one the API is reached on, each
+#                         alone on a qemu hub of its own, so no DHCP, no
+#                         route and no peer: for a suite to reconfigure
+#                         without cutting itself off
 #   APPLIANCE_HTTP_PORT   8080       APPLIANCE_HTTPS_PORT   8443
 #   APPLIANCE_SSH_PORT    2222       APPLIANCE_SSH          false
 #   APPLIANCE_BASELINE    fresh-install: the snapshot start takes; empty
@@ -49,7 +53,8 @@
 # start prints TN_PROFILE, TN_HOST (host:https port), TN_HOST_HTTP,
 # TN_USERNAME, TN_PASSWORD, TN_DOMAIN, TN_BASELINE (the suite's contract,
 # as the lab's claim action gives it, less its TN_GUEST_ISO), TN_SSH when
-# APPLIANCE_SSH is true, and what it measured:
+# APPLIANCE_SSH is true, TN_SPARE_NICS (the spare NICs' MAC addresses,
+# space-separated) when there are any, and what it measured:
 # APPLIANCE_BOOT_SECONDS, APPLIANCE_SNAPSHOT_SECONDS.
 
 set -euo pipefail
@@ -101,6 +106,7 @@ start() {
     local ndata="${APPLIANCE_DATA_DISKS:-10}" datagb="${APPLIANCE_DATA_DISK_GB:-10}"
     local extragb=()
     read -r -a extragb <<< "${APPLIANCE_EXTRA_DISK_GB:-}"
+    local nspare="${APPLIANCE_SPARE_NICS:-0}"
     local http="${APPLIANCE_HTTP_PORT:-8080}" https="${APPLIANCE_HTTPS_PORT:-8443}" sshp="${APPLIANCE_SSH_PORT:-2222}"
     local baseline="${APPLIANCE_BASELINE-fresh-install}"
     local password="${APPLIANCE_PASSWORD:-$(head -c 15 /dev/urandom | base64 | tr -d '/+=')}"
@@ -111,6 +117,7 @@ start() {
     for gb in "${extragb[@]}"; do
         [[ "$gb" =~ ^[1-9][0-9]*$ ]] || die "APPLIANCE_EXTRA_DISK_GB: \"$gb\" is not a whole number of GB"
     done
+    [[ "$nspare" =~ ^[0-9]$ ]] || die "APPLIANCE_SPARE_NICS: \"$nspare\" is not a number of NICs from 0 to 9"
     needs qemu-system-x86_64 qemu-system-x86 qemu-img qemu-utils python3 python3
     ovmf
     local accel="${APPLIANCE_ACCEL:-kvm}" cpu=host
@@ -157,9 +164,26 @@ start() {
         extrasaid=", and $nextra more of $(printf '%sG ' "${extragb[@]}")"
         extrasaid="${extrasaid% }"
     fi
+    # After the NIC the API is reached on, so that one keeps its PCI slot,
+    # and with it its name, whatever the count. Each on a hub with no other
+    # port: its link is up, and nothing ever answers on it. qemu warns
+    # "hub N is not connected to host network" for each, which is the
+    # point. The MACs are fixed, for a suite to tell these NICs apart by.
+    local nics=() spare_macs=()
+    for i in $(seq 1 "$nspare"); do
+        spare_macs+=("52:54:00:e2:e0:0$i")
+        nics+=(-netdev "hubport,id=spare$i,hubid=$i"
+               -device "virtio-net-pci,netdev=spare$i,mac=52:54:00:e2:e0:0$i")
+    done
+    local nicssaid=""
+    if [ "$nspare" -eq 1 ]; then
+        nicssaid=", 1 spare NIC"
+    elif [ "$nspare" -gt 1 ]; then
+        nicssaid=", $nspare spare NICs"
+    fi
 
     local booted t0
-    say "booting $disk as $name: ${memory} MB, $vcpus vCPUs, $ndata data disks of ${datagb}G$extrasaid"
+    say "booting $disk as $name: ${memory} MB, $vcpus vCPUs, $ndata data disks of ${datagb}G$extrasaid$nicssaid"
     t0=$(date +%s.%N)
     qemu-system-x86_64 -name "$name" -machine "q35,accel=$accel" -cpu "$cpu" -smp "$vcpus" -m "$memory" \
         -smbios "type=1,serial=$name" \
@@ -169,6 +193,7 @@ start() {
         -device "virtio-blk-pci,drive=os,serial=os,bootindex=0" \
         "${drives[@]}" \
         -nic "user,model=virtio-net-pci$(hostfwd 80 "$http")$(hostfwd 443 "$https")$(hostfwd 22 "$sshp")" \
+        "${nics[@]}" \
         -device virtio-rng-pci \
         -qmp "unix:$QMP,server=on,wait=off" \
         -display none -serial "file:$DIR/console.log" \
@@ -221,6 +246,9 @@ EOF
     # mean it can ssh in.
     if [ "${APPLIANCE_SSH:-false}" = true ]; then
         echo "TN_SSH=127.0.0.1:$sshp"
+    fi
+    if [ "$nspare" -gt 0 ]; then
+        echo "TN_SPARE_NICS=${spare_macs[*]}"
     fi
 }
 

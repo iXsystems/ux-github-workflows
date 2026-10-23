@@ -69,6 +69,13 @@ inputs:
       alike cannot give, such as a disk big enough to mirror the boot pool
       onto. Not for an HA pair.
     default: ''
+  spare-nics:
+    description: >-
+      NICs besides the one the API is reached on, 0 to 9, each alone on a
+      qemu hub: no DHCP, no route, nothing on the other end. For a suite to
+      apply interface changes on without cutting itself off. Their MACs,
+      52:54:00:e2:e0:01 and up, are in TN_SPARE_NICS. Not for an HA pair.
+    default: '0'
   ssh:
     description: '`true` enables ssh for the admin, on TN_SSH.'
     default: 'false'
@@ -114,6 +121,7 @@ runs:
         APPLIANCE_DATA_DISKS: ${{ inputs.data-disk-count }}
         APPLIANCE_DATA_DISK_GB: ${{ inputs.data-disk-gb }}
         APPLIANCE_EXTRA_DISK_GB: ${{ inputs.extra-disk-gb }}
+        APPLIANCE_SPARE_NICS: ${{ inputs.spare-nics }}
         APPLIANCE_SSH: ${{ inputs.ssh }}
         APPLIANCE_DISK_INPUT: ${{ inputs.disk }}
         EXPORT_ENV: ${{ inputs.export-env }}
@@ -126,6 +134,10 @@ runs:
         # wanted the disks without saying why.
         if [ "$HA" = true ] && [ -n "$APPLIANCE_EXTRA_DISK_GB" ]; then
           echo "::error::extra-disk-gb is for one appliance; an HA pair has only the data-disk-count disks its nodes share"
+          exit 1
+        fi
+        if [ "$HA" = true ] && [ "${APPLIANCE_SPARE_NICS:-0}" != 0 ]; then
+          echo "::error::spare-nics is for one appliance; ha.sh wires an HA pair's NICs itself"
           exit 1
         fi
         export APPLIANCE_DIR="$RUNNER_TEMP/truenas-appliance"
