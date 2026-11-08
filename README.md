@@ -462,6 +462,14 @@ and would either fail or silently cache Yarn 1's directory for a Yarn 4 repo.
 The `yarn-cache` input resolves the folder with `yarn config get cacheFolder`
 after Corepack instead.
 
+**Node 25 and later do not ship Corepack.** When the active Node has no
+`corepack` in its bin directory, the action installs a pinned `corepack` there
+with `npm install --global` before enabling it. It checks the bin directory
+rather than `PATH` because GitHub's runner images leave a Corepack from their
+own Node on `PATH`; a job that runs in a container, such as the Playwright
+image, has no such leftover and would fail with `corepack: command not found`.
+Node 24 and earlier use their bundled Corepack, as before.
+
 This replaced identical local copies in `truenas/webui` and `truenas-connect/ui`
 and six inline repetitions in `iXsystems/truenas-ui-components`'s `ci-cd.yml`,
 which had drifted to a floating `'24'` against the others' pinned `24.13.1`.

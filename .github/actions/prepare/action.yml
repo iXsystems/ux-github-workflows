@@ -46,6 +46,22 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
 
+    # Node 25 and later no longer ship Corepack. Install it next to the active
+    # Node when it is missing there. Checking `command -v corepack` is not
+    # enough: on GitHub's runner images a Corepack from the image's own Node
+    # stays on PATH, which hides the problem until a job runs in a container
+    # without one. Node 24 and earlier keep their bundled Corepack untouched.
+    - name: Install Corepack if Node lacks it
+      shell: bash
+      env:
+        COREPACK_VERSION: '0.36.0'
+      run: |
+        node_bin="$(dirname "$(command -v node)")"
+        if [ ! -x "$node_bin/corepack" ]; then
+          echo "Node $(node --version) has no Corepack; installing corepack@$COREPACK_VERSION."
+          npm install --global "corepack@$COREPACK_VERSION"
+        fi
+
     - name: Enable Corepack for Yarn 4
       shell: bash
       run: corepack enable
