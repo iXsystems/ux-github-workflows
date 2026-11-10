@@ -207,9 +207,10 @@ class FakeAgent:
     guest-set-time, with a stale reply already in the channel, as a loadvm
     can leave one."""
 
-    def __init__(self, clock_ns, set_takes=True):
+    def __init__(self, clock_ns, set_takes=True, hwclock=True):
         self.clock_ns = clock_ns
         self.set_takes = set_takes
+        self.hwclock = hwclock
         self.seen = []
         self.path = os.path.join(tempfile.mkdtemp(), "qga")
         self.srv = socket.socket(socket.AF_UNIX)
@@ -238,6 +239,11 @@ class FakeAgent:
                     if self.set_takes:
                         self.clock_ns = args["time"]
                     out = {"return": {}}
+                    if not self.hwclock:
+                        # As TrueNAS answers: the system clock is set, then hwclock is missing.
+                        out = {"error": {"class": "GenericError", "desc": (
+                            "child process has failed to set hardware clock to system time: "
+                            "failed to exec '/sbin/hwclock': No such file or directory\n")}}
                 else:
                     out = {"error": {"class": "CommandNotFound", "desc": cmd}}
                 f.write(json.dumps(out).encode() + b"\n")
@@ -265,6 +271,16 @@ class TestGuestAgent(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             tnctl.cmd_set_time(args(socket=agent.path))
         self.assertLess(abs(agent.clock_ns - time.time_ns()), tnctl.CLOCK_TOLERANCE_NS)
+        self.assertIn("it was -300.0s off", err.getvalue())
+
+    def test_set_time_takes_a_guest_without_hwclock(self):
+        agent = FakeAgent(clock_ns=time.time_ns() - 300 * 10**9, hwclock=False)
+        self.addCleanup(agent.close)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            tnctl.cmd_set_time(args(socket=agent.path))
+        self.assertLess(abs(agent.clock_ns - time.time_ns()), tnctl.CLOCK_TOLERANCE_NS)
+        self.assertNotIn("hwclock", err.getvalue())
         self.assertIn("it was -300.0s off", err.getvalue())
 
     def test_set_time_fails_when_the_clock_does_not_take_it(self):

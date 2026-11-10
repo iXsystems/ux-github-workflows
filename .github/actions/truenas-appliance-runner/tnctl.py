@@ -488,6 +488,9 @@ def qga(path, command, arguments=None, timeout=10):
                 raise RPCError(command, r["error"])
             return r.get("return")
     finally:
+        # Both: the socket stays open while its file does, and qemu's chardev
+        # serves one client at a time, so the next call would wait forever.
+        f.close()
         s.close()
 
 
@@ -498,10 +501,22 @@ CLOCK_TOLERANCE_NS = 2 * 10**9
 
 def cmd_set_time(a):
     was = qga(a.socket, "guest-get-time", timeout=a.timeout) - time.time_ns()
-    qga(a.socket, "guest-set-time", {"time": time.time_ns()}, timeout=a.timeout)
+    # qemu-ga sets the system clock, then runs hwclock to copy it to the
+    # hardware clock and fails the call if that does. TrueNAS has no
+    # /sbin/hwclock, so the call fails with the system clock already set.
+    # The hardware clock does not matter here (loadvm restores it, and the
+    # guest reads it only at boot): the system clock decides, below.
+    refused = None
+    try:
+        qga(a.socket, "guest-set-time", {"time": time.time_ns()}, timeout=a.timeout)
+    except RPCError as e:
+        refused = e
     off = qga(a.socket, "guest-get-time", timeout=a.timeout) - time.time_ns()
     if abs(off) > CLOCK_TOLERANCE_NS:
-        raise SystemExit(f"tnctl set-time: the guest's clock is still {off / 1e9:+.1f}s off")
+        why = f" ({refused})" if refused else ""
+        raise SystemExit(f"tnctl set-time: the guest's clock is still {off / 1e9:+.1f}s off{why}")
+    if refused and "hwclock" not in str(refused):
+        log(f"guest-set-time answered {refused}, but the clock took")
     log(f"guest clock set: it was {was / 1e9:+.1f}s off")
 
 
