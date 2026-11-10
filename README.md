@@ -575,6 +575,23 @@ Outputs: `host`, `host-http`, `username`, `password` (masked), `ssh`,
 time went, from systemd and middleware's own log, over ssh (it leaves ssh on
 with a key and sudo for the admin, so revert afterwards if that matters).
 
+**Run the suite on the runner, not in a container.** `truenas-appliance`,
+qemu and its monitor socket are the runner's, so a spec that reverts the
+appliance from inside Playwright's image (or any container) cannot reach
+them. The runner image carries the system libraries Playwright's browsers
+need (github-truenas-runner's `playwright` step); the job installs its own
+Playwright version's browsers, cached on that version, and calls
+`truenas-appliance revert <snapshot>` from the suite directly:
+
+```yaml
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - run: yarn playwright install chromium firefox webkit
+      - run: yarn playwright test
+```
+
 The step's log has the boot's milestones, in seconds since qemu started (the
 port accepting connections, the API's websocket answering, the login,
 `system.ready`, and when the guest's kernel started), and the console of the
