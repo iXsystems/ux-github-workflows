@@ -575,6 +575,13 @@ Outputs: `host`, `host-http`, `username`, `password` (masked), `ssh`,
 time went, from systemd and middleware's own log, over ssh (it leaves ssh on
 with a key and sudo for the admin, so revert afterwards if that matters).
 
+`revert` restores the appliance's memory, and with it the clock it had when
+the snapshot was taken. It then sets the clock to the runner's through the
+guest agent (TrueNAS ships `qemu-ga`; qemu gives it a channel), so two-factor
+codes, tokens and timestamps a suite makes on the runner's clock hold. If
+that fails, the revert still succeeds with a warning that the clock is
+behind; `probe` fails instead.
+
 **Run the suite on the runner, not in a container.** `truenas-appliance`,
 qemu and its monitor socket are the runner's, so a spec that reverts the
 appliance from inside Playwright's image (or any container) cannot reach

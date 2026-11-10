@@ -3,7 +3,8 @@
 
 Standard library only, so it runs on any runner with a python3: the
 installer's and the middleware's JSON-RPC 2.0 over a websocket, and qemu's
-QMP over a unix socket. appliance.sh calls it; the image build does too.
+QMP and the guest agent over unix sockets. appliance.sh calls it; the image
+build does too.
 
   tnctl.py install URL [--disk NAME]
       Drive the installer ISO at ws://.../ws: install to the first disk it
@@ -38,6 +39,13 @@ QMP over a unix socket. appliance.sh calls it; the image build does too.
   tnctl.py qmp SOCKET COMMAND [JSON-ARGS]
   tnctl.py hmp SOCKET "savevm fresh-install"
       One QMP command, or a human monitor command through QMP.
+
+  tnctl.py set-time SOCKET [--timeout S]
+      Set the guest's clock to this machine's through the guest agent
+      (qemu-ga, which TrueNAS ships) on SOCKET, and check it took. After a
+      loadvm the guest's clock is the snapshot's: minutes behind, and two-
+      factor codes, token expiry and the like are wrong until it catches up.
+      Logs how far off it was.
 
 URL is ws://host:port; the path (/ws for the installer, /api/current for
 the middleware) is added here.
@@ -436,6 +444,82 @@ def qmp(path, command, arguments=None, timeout=600):
         s.close()
 
 
+def qga(path, command, arguments=None, timeout=10):
+    """One guest agent command over the virtserialport's socket.
+
+    The agent has no greeting and keeps no session. guest-sync with a fresh
+    id comes first, and replies until that id are dropped: whatever sits in
+    the channel (a reply to a client that left, or the buffers a loadvm
+    restored) is not taken for this command's. A missing or stopped agent
+    is a timeout.
+    """
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(timeout)
+    s.connect(path)
+    f = s.makefile("rwb")
+
+    def send(cmd, args=None):
+        f.write(json.dumps({"execute": cmd, **({"arguments": args} if args is not None else {})}).encode() + b"\n")
+        f.flush()
+
+    def read():
+        line = f.readline()
+        if not line:
+            raise Closed("qga closed")
+        try:
+            # guest-sync-delimited puts 0xFF before its reply; a stale one may be here.
+            return json.loads(line.strip(b"\xff \r\n"))
+        except ValueError:
+            return None
+
+    try:
+        sync = int.from_bytes(os.urandom(4), "big") >> 1
+        send("guest-sync", {"id": sync})
+        while True:
+            r = read()
+            if isinstance(r, dict) and r.get("return") == sync:
+                break
+        send(command, arguments)
+        while True:
+            r = read()
+            if not isinstance(r, dict):
+                continue
+            if "error" in r:
+                raise RPCError(command, r["error"])
+            return r.get("return")
+    finally:
+        # Both: the socket stays open while its file does, and qemu's chardev
+        # serves one client at a time, so the next call would wait forever.
+        f.close()
+        s.close()
+
+
+# How far the guest's clock may be from this machine's once set: the two
+# calls' own round trips, with room.
+CLOCK_TOLERANCE_NS = 2 * 10**9
+
+
+def cmd_set_time(a):
+    was = qga(a.socket, "guest-get-time", timeout=a.timeout) - time.time_ns()
+    # qemu-ga sets the system clock, then runs hwclock to copy it to the
+    # hardware clock and fails the call if that does. TrueNAS has no
+    # /sbin/hwclock, so the call fails with the system clock already set.
+    # The hardware clock does not matter here (loadvm restores it, and the
+    # guest reads it only at boot): the system clock decides, below.
+    refused = None
+    try:
+        qga(a.socket, "guest-set-time", {"time": time.time_ns()}, timeout=a.timeout)
+    except RPCError as e:
+        refused = e
+    off = qga(a.socket, "guest-get-time", timeout=a.timeout) - time.time_ns()
+    if abs(off) > CLOCK_TOLERANCE_NS:
+        why = f" ({refused})" if refused else ""
+        raise SystemExit(f"tnctl set-time: the guest's clock is still {off / 1e9:+.1f}s off{why}")
+    if refused and "hwclock" not in str(refused):
+        log(f"guest-set-time answered {refused}, but the clock took")
+    log(f"guest clock set: it was {was / 1e9:+.1f}s off")
+
+
 def cmd_qmp(a):
     r = qmp(a.socket, a.command, json.loads(a.args) if a.args else None)
     print(json.dumps(r, indent=2))
@@ -474,6 +558,7 @@ def main():
     p("call", cmd_call, "url", "user", "password", "method", timeout=120).add_argument("params", nargs="*")
     p("qmp", cmd_qmp, "socket", "command").add_argument("args", nargs="?")
     p("hmp", cmd_hmp, "socket", "line")
+    p("set-time", cmd_set_time, "socket", timeout=10)
     a = ap.parse_args()
     try:
         a.fn(a)
