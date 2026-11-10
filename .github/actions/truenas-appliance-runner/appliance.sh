@@ -12,7 +12,8 @@
 #                                 as the baseline; KEY=value on stdout
 #   appliance.sh snapshot <name>  save the running appliance, memory and
 #                                 disks, as <name>
-#   appliance.sh revert <name>    back to <name>, in seconds, no boot
+#   appliance.sh revert <name>    back to <name>, in seconds, no boot, with
+#                                 the guest's clock set to now
 #   appliance.sh probe [baseline] change it, revert, check the change went
 #   appliance.sh boot-report     where the boot's time went: systemd's
 #                                 critical chain and slowest units, and
@@ -63,6 +64,9 @@ set -euo pipefail
 
 DIR="${APPLIANCE_DIR:-${RUNNER_TEMP:-/tmp}/truenas-appliance}"
 QMP="$DIR/qmp.sock"
+# The guest agent's channel: TrueNAS ships qemu-ga, which starts once this
+# port (org.qemu.guest_agent.0) appears. revert sets the clock through it.
+QGA="$DIR/qga.sock"
 STATE="$DIR/state.env"
 
 hmp() { "${TNCTL[@]}" hmp "$QMP" "$*"; }
@@ -195,6 +199,9 @@ start() {
         -nic "user,model=virtio-net-pci$(hostfwd 80 "$http")$(hostfwd 443 "$https")$(hostfwd 22 "$sshp")" \
         "${nics[@]}" \
         -device virtio-rng-pci \
+        -device virtio-serial-pci,id=vser0 \
+        -chardev "socket,id=qga0,path=$QGA,server=on,wait=off" \
+        -device "virtserialport,bus=vser0.0,chardev=qga0,name=org.qemu.guest_agent.0" \
         -qmp "unix:$QMP,server=on,wait=off" \
         -display none -serial "file:$DIR/console.log" \
         -daemonize -pidfile "$DIR/qemu.pid"
@@ -262,8 +269,10 @@ snapshot() {
 }
 
 # revert: loadvm restores memory and disks as they were, so the API is up
-# the moment it returns; its connections from before are gone, and its
-# clock is the snapshot's until it catches up.
+# the moment it returns; its connections from before are gone. It restores
+# the clock as well, minutes behind by now, so the guest agent sets it to
+# this machine's: a suite's two-factor codes, tokens and timestamps are
+# made on that clock. A clock left behind is a warning, not a failed revert.
 revert() {
     local name="${1:?revert <name>}"
     running || die "no appliance running"
@@ -275,6 +284,9 @@ revert() {
         die "no snapshot $name to revert to; the appliance runs on as it was"
     fi
     resume
+    if ! "${TNCTL[@]}" set-time "$QGA"; then
+        echo "::warning::truenas-appliance revert: the appliance's clock is the snapshot's, behind this machine's" >&2
+    fi
     "${TNCTL[@]}" wait "$(url)" "$APPLIANCE_USER" "$APPLIANCE_PASSWORD_NOW" --timeout 120 >/dev/null
     awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN {printf "%.1f\n", b - a}'
 }
@@ -359,7 +371,7 @@ cpu_seconds() {
 # over the API, the appliance reverted to <baseline>, and the group must
 # be gone; KEY=value on stdout.
 probe() {
-    local baseline="${1:-fresh-install}" took left
+    local baseline="${1:-fresh-install}" took left skew
     state
     call() { "${TNCTL[@]}" call "$(url)" "$APPLIANCE_USER" "$APPLIANCE_PASSWORD_NOW" "$@"; }
     call group.create '{"name": "e2e_probe"}' >/dev/null
@@ -368,7 +380,17 @@ probe() {
     took="$(revert "$baseline")"
     left="$(call group.query '[["name", "=", "e2e_probe"]]' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
     [ "$left" = 0 ] || die "probe: after reverting to $baseline the group is still there"
-    say "revert to $baseline took ${took}s, and undid the change"
+    # The clock as middleware reads it ({"$date": ms} on the wire), against this machine's.
+    # shellcheck disable=SC2016 # $date is the key's name, not a shell variable
+    skew="$(call system.info | python3 -c '
+import json, sys, time
+from datetime import datetime
+d = json.load(sys.stdin)["datetime"]
+ms = d["$date"] if isinstance(d, dict) else datetime.fromisoformat(d).timestamp() * 1000
+print(f"{ms / 1000 - time.time():.1f}")')"
+    python3 -c "import sys; sys.exit(abs(float(sys.argv[1])) > 5)" "$skew" \
+        || die "probe: after reverting to $baseline the appliance's clock is ${skew}s off"
+    say "revert to $baseline took ${took}s, undid the change, and left the clock ${skew}s off"
     echo "APPLIANCE_REVERT_SECONDS=$took"
 }
 

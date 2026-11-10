@@ -202,6 +202,88 @@ class TestTnctl(unittest.TestCase):
         self.assertEqual(e.exception.code, 1)
 
 
+class FakeAgent:
+    """qemu-ga on a unix socket: answers guest-sync, guest-get-time and
+    guest-set-time, with a stale reply already in the channel, as a loadvm
+    can leave one."""
+
+    def __init__(self, clock_ns, set_takes=True):
+        self.clock_ns = clock_ns
+        self.set_takes = set_takes
+        self.seen = []
+        self.path = os.path.join(tempfile.mkdtemp(), "qga")
+        self.srv = socket.socket(socket.AF_UNIX)
+        self.srv.bind(self.path)
+        self.srv.listen()
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                conn, _ = self.srv.accept()
+            except OSError:
+                return
+            f = conn.makefile("rwb")
+            f.write(b'\xff{"return": 7}\n')
+            f.flush()
+            for line in f:
+                msg = json.loads(line)
+                self.seen.append(msg)
+                cmd, args = msg["execute"], msg.get("arguments", {})
+                if cmd == "guest-sync":
+                    out = {"return": args["id"]}
+                elif cmd == "guest-get-time":
+                    out = {"return": self.clock_ns}
+                elif cmd == "guest-set-time":
+                    if self.set_takes:
+                        self.clock_ns = args["time"]
+                    out = {"return": {}}
+                else:
+                    out = {"error": {"class": "CommandNotFound", "desc": cmd}}
+                f.write(json.dumps(out).encode() + b"\n")
+                f.flush()
+            conn.close()
+
+    def close(self):
+        self.srv.close()
+
+
+class TestGuestAgent(unittest.TestCase):
+    def test_sync_skips_what_was_left_in_the_channel(self):
+        agent = FakeAgent(clock_ns=123)
+        self.addCleanup(agent.close)
+        self.assertEqual(tnctl.qga(agent.path, "guest-get-time"), 123)
+        self.assertEqual([m["execute"] for m in agent.seen], ["guest-sync", "guest-get-time"])
+        with self.assertRaises(tnctl.RPCError):
+            tnctl.qga(agent.path, "guest-nope")
+
+    def test_set_time_sets_the_guest_clock_to_this_machines(self):
+        behind = time.time_ns() - 300 * 10**9
+        agent = FakeAgent(clock_ns=behind)
+        self.addCleanup(agent.close)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            tnctl.cmd_set_time(args(socket=agent.path))
+        self.assertLess(abs(agent.clock_ns - time.time_ns()), tnctl.CLOCK_TOLERANCE_NS)
+        self.assertIn("it was -300.0s off", err.getvalue())
+
+    def test_set_time_fails_when_the_clock_does_not_take_it(self):
+        agent = FakeAgent(clock_ns=time.time_ns() - 300 * 10**9, set_takes=False)
+        self.addCleanup(agent.close)
+        with self.assertRaises(SystemExit) as e:
+            tnctl.cmd_set_time(args(socket=agent.path))
+        self.assertIn("still", str(e.exception.code))
+
+    def test_no_agent_is_a_timeout(self):
+        path = os.path.join(tempfile.mkdtemp(), "qga")
+        srv = socket.socket(socket.AF_UNIX)
+        srv.bind(path)
+        srv.listen()
+        self.addCleanup(srv.close)
+        with self.assertRaises(TimeoutError):
+            tnctl.qga(path, "guest-get-time", timeout=0.5)
+
+
 class TestTailTs(unittest.TestCase):
     def test_lines_are_timed_and_cleaned(self):
         d = tempfile.mkdtemp()
