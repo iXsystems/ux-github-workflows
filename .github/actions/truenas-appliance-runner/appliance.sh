@@ -25,7 +25,7 @@
 #                                 result as JSON on stdout
 #   appliance.sh snapshots        the names there are
 #   appliance.sh console [lines]  the end of its serial console
-#   appliance.sh stop
+#   appliance.sh stop             quit it, and take its bridge network down
 #
 # Settings, environment variables, all optional:
 #
@@ -42,8 +42,16 @@
 #                         alone on a qemu hub of its own, so no DHCP, no
 #                         route and no peer: for a suite to reconfigure
 #                         without cutting itself off
+#   APPLIANCE_NETWORK     user: qemu's user-mode network, the guest behind
+#                         its NAT and its ports forwarded to this machine's
+#                         loopback, on the ports below. bridge: the guest
+#                         on a bridge with this machine (bridge_up), on its
+#                         own address and its real ports, reachable from
+#                         here, from containers and from a browser; needs
+#                         passwordless sudo
 #   APPLIANCE_HTTP_PORT   8080       APPLIANCE_HTTPS_PORT   8443
 #   APPLIANCE_SSH_PORT    2222       APPLIANCE_SSH          false
+#                         (the ports forwarded with user; bridge has none)
 #   APPLIANCE_BASELINE    fresh-install: the snapshot start takes; empty
 #                         takes none
 #   APPLIANCE_PASSWORD    the claim's admin password (default: generated)
@@ -55,8 +63,10 @@
 # TN_USERNAME, TN_PASSWORD, TN_DOMAIN, TN_BASELINE (the suite's contract,
 # as the lab's claim action gives it, less its TN_GUEST_ISO), TN_SSH when
 # APPLIANCE_SSH is true, TN_SPARE_NICS (the spare NICs' MAC addresses,
-# space-separated) when there are any, and what it measured:
-# APPLIANCE_BOOT_SECONDS, APPLIANCE_SNAPSHOT_SECONDS.
+# space-separated) when there are any, TN_NETWORK (user or bridge),
+# TN_RUNNER_IP (where the guest reaches this machine), TN_APPLIANCE_IP
+# with bridge, and what it measured: APPLIANCE_BOOT_SECONDS,
+# APPLIANCE_SNAPSHOT_SECONDS.
 
 set -euo pipefail
 # shellcheck source=lib.sh
@@ -69,11 +79,47 @@ QMP="$DIR/qmp.sock"
 QGA="$DIR/qga.sock"
 STATE="$DIR/state.env"
 
+# The bridge network (APPLIANCE_NETWORK=bridge): this machine at .1 and the
+# appliance at .10, by its MAC. Not ha.sh's 10.231.0.0/24, Docker's
+# 172.17.0.0/16 or compose's networks. The MAC is fixed so that the address
+# is the same after a revert; the spare NICs' are e0:01 and up.
+BR=tnapp-br
+TAP=tnapp-tap
+BR_NET=10.232.0
+BR_RUNNER_IP=$BR_NET.1
+BR_APPLIANCE_IP=$BR_NET.10
+BR_MAC=52:54:00:e2:e0:00
+# What bridge_up changed, written before it changes anything: bridge_down
+# reads it, even after a start that failed halfway.
+NETSTATE="$DIR/network.env"
+# The rules bridge_up adds, as "table chain rule...". Docker loads
+# br_netfilter and drops FORWARD by default, which would drop the
+# appliance's traffic to containers and beyond this machine, and theirs to
+# it; the NAT takes it beyond this machine, as qemu's user-mode NAT does.
+BR_RULES=(
+    "filter FORWARD -i $BR -j ACCEPT"
+    "filter FORWARD -o $BR -j ACCEPT"
+    "nat POSTROUTING -s $BR_NET.0/24 ! -o $BR -j MASQUERADE"
+)
+
 hmp() { "${TNCTL[@]}" hmp "$QMP" "$*"; }
 # resume: a failed loadvm leaves the VM paused, and later loadvms leave it
 # so, however they go; cont is a no-op on one that runs.
 resume() { "${TNCTL[@]}" qmp "$QMP" cont >/dev/null; }
-url() { echo "ws://127.0.0.1:${APPLIANCE_HTTP_PORT:-8080}"; }
+# addr <guest port>: host:port where this machine reaches that port of the
+# appliance: its own address on the bridge, or qemu's forward of it.
+addr() {
+    if [ "${APPLIANCE_NETWORK:-user}" = bridge ]; then
+        echo "$BR_APPLIANCE_IP:$1"
+        return
+    fi
+    case "$1" in
+    80)  echo "127.0.0.1:${APPLIANCE_HTTP_PORT:-8080}" ;;
+    443) echo "127.0.0.1:${APPLIANCE_HTTPS_PORT:-8443}" ;;
+    22)  echo "127.0.0.1:${APPLIANCE_SSH_PORT:-2222}" ;;
+    esac
+}
+url() { echo "ws://$(addr 80)"; }
 running() { [ -f "$DIR/qemu.pid" ] && kill -0 "$(cat "$DIR/qemu.pid")" 2>/dev/null; }
 # shellcheck source=/dev/null
 state() { [ -r "$STATE" ] || die "no appliance started here ($STATE)"; . "$STATE"; }
@@ -104,6 +150,70 @@ print(found[0])
 '
 }
 
+# bridge_up: the bridge network. A bridge with this machine on it, a tap
+# for qemu (this user's, so qemu runs without sudo), BR_RULES, and dnsmasq
+# giving the appliance's MAC its address and answering its DNS.
+bridge_up() {
+    say "network: bridge $BR, this machine at $BR_RUNNER_IP, the appliance at $BR_APPLIANCE_IP"
+    local forward rule r
+    forward="$(cat /proc/sys/net/ipv4/ip_forward)"
+    echo "BR_FORWARD_WAS=$forward" > "$NETSTATE"
+    sudo -n ip link add "$BR" type bridge
+    sudo -n ip addr add "$BR_RUNNER_IP/24" dev "$BR"
+    sudo -n ip link set "$BR" up
+    sudo -n ip tuntap add dev "$TAP" mode tap user "$(id -u)"
+    sudo -n ip link set "$TAP" master "$BR" up
+    for rule in "${BR_RULES[@]}"; do
+        read -r -a r <<< "$rule"
+        sudo -n iptables -t "${r[0]}" -I "${r[1]}" "${r[@]:2}"
+    done
+    # Docker turns it on; a runner without Docker may not have.
+    if [ "$forward" != 1 ]; then
+        sudo -n sysctl -q -w net.ipv4.ip_forward=1
+    fi
+    # DNS as well as DHCP, unlike ha.sh's: the appliance needs a resolver
+    # for NTP and for what middleware looks up as it starts, and this
+    # machine's may be a stub on its loopback (systemd-resolved's
+    # 127.0.0.53) that the appliance cannot reach. dnsmasq forwards to
+    # whatever /etc/resolv.conf names, and its offer names it as the router
+    # and the DNS server; --no-hosts keeps this machine's /etc/hosts out of
+    # its answers. Static: it answers this MAC alone. The lease never ends,
+    # so a revert, which restores the guest's lease with its memory and
+    # moves its clock on, never finds it expired.
+    sudo -n dnsmasq --interface="$BR" --bind-interfaces --except-interface=lo --no-hosts \
+        --dhcp-range="$BR_APPLIANCE_IP,static" --dhcp-host="$BR_MAC,$BR_APPLIANCE_IP,infinite" \
+        --dhcp-leasefile="$DIR/dnsmasq.leases" --pid-file="$DIR/dnsmasq.pid" \
+        --log-dhcp --log-facility="$DIR/dnsmasq.log"
+}
+
+# bridge_down: undo bridge_up, each part only if it is there, so that a
+# self-hosted runner's next start finds nothing of this one. Nothing to do
+# for a user-mode appliance.
+bridge_down() {
+    if [ ! -f "$NETSTATE" ] && ! ip link show "$BR" >/dev/null 2>&1; then
+        return 0
+    fi
+    say "network: taking $BR down"
+    local BR_FORWARD_WAS=1 rule r
+    # shellcheck source=/dev/null
+    if [ -r "$NETSTATE" ]; then . "$NETSTATE"; fi
+    if [ -s "$DIR/dnsmasq.pid" ]; then
+        sudo -n kill "$(cat "$DIR/dnsmasq.pid")" 2>/dev/null || true
+    fi
+    for rule in "${BR_RULES[@]}"; do
+        read -r -a r <<< "$rule"
+        while sudo -n iptables -t "${r[0]}" -C "${r[1]}" "${r[@]:2}" 2>/dev/null; do
+            sudo -n iptables -t "${r[0]}" -D "${r[1]}" "${r[@]:2}"
+        done
+    done
+    if ip link show "$TAP" >/dev/null 2>&1; then sudo -n ip link del "$TAP"; fi
+    if ip link show "$BR" >/dev/null 2>&1; then sudo -n ip link del "$BR"; fi
+    if [ "$BR_FORWARD_WAS" != 1 ]; then
+        sudo -n sysctl -q -w net.ipv4.ip_forward="$BR_FORWARD_WAS"
+    fi
+    rm -f "$NETSTATE"
+}
+
 start() {
     local disk="${APPLIANCE_DISK:-}"
     local memory="${APPLIANCE_MEMORY_MB:-6144}" vcpus="${APPLIANCE_VCPUS:-4}"
@@ -117,6 +227,18 @@ start() {
     local name="appliance-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${GITHUB_JOB:-job}"
 
     running && die "an appliance is running already ($DIR)"
+    APPLIANCE_NETWORK="${APPLIANCE_NETWORK:-user}"
+    case "$APPLIANCE_NETWORK" in
+    user) ;;
+    bridge)
+        if ip link show "$BR" >/dev/null 2>&1; then
+            die "$BR exists already: an earlier appliance's network is still up, and truenas-appliance stop takes it down"
+        fi
+        sudo -n true 2>/dev/null || die "APPLIANCE_NETWORK=bridge needs passwordless sudo, for the bridge, the tap, iptables and dnsmasq"
+        needs dnsmasq dnsmasq-base iptables iptables
+        ;;
+    *)  die "APPLIANCE_NETWORK: \"$APPLIANCE_NETWORK\" is not user or bridge" ;;
+    esac
     local gb
     for gb in "${extragb[@]}"; do
         [[ "$gb" =~ ^[1-9][0-9]*$ ]] || die "APPLIANCE_EXTRA_DISK_GB: \"$gb\" is not a whole number of GB"
@@ -185,6 +307,15 @@ start() {
     elif [ "$nspare" -gt 1 ]; then
         nicssaid=", $nspare spare NICs"
     fi
+    # -nic either way, so the NIC is made the same way, keeps its PCI slot,
+    # and with it its name in the guest.
+    local nic
+    if [ "$APPLIANCE_NETWORK" = bridge ]; then
+        bridge_up
+        nic="tap,ifname=$TAP,script=no,downscript=no,model=virtio-net-pci,mac=$BR_MAC"
+    else
+        nic="user,model=virtio-net-pci$(hostfwd 80 "$http")$(hostfwd 443 "$https")$(hostfwd 22 "$sshp")"
+    fi
 
     local booted t0
     say "booting $disk as $name: ${memory} MB, $vcpus vCPUs, $ndata data disks of ${datagb}G$extrasaid$nicssaid"
@@ -196,7 +327,7 @@ start() {
         -drive "file=$DIR/os.qcow2,if=none,id=os,format=qcow2,discard=unmap" \
         -device "virtio-blk-pci,drive=os,serial=os,bootindex=0" \
         "${drives[@]}" \
-        -nic "user,model=virtio-net-pci$(hostfwd 80 "$http")$(hostfwd 443 "$https")$(hostfwd 22 "$sshp")" \
+        -nic "$nic" \
         "${nics[@]}" \
         -device virtio-rng-pci \
         -device virtio-serial-pci,id=vser0 \
@@ -215,16 +346,21 @@ start() {
             --since "$t0" --timeout "${APPLIANCE_BOOT_TIMEOUT:-900}"); then
         say "--- its console, last 60 lines"
         console 60 >&2 || true
+        if [ "$APPLIANCE_NETWORK" = bridge ]; then
+            say "--- dnsmasq"
+            cat "$DIR/dnsmasq.log" >&2 2>/dev/null || true
+        fi
         die "the appliance's API never came up"
     fi
     say "API up ${booted}s after qemu started"
     "${TNCTL[@]}" rotate "$(url)" "$APPLIANCE_USER" "$APPLIANCE_TEMPLATE_PASSWORD" "$password"
     if [ "${APPLIANCE_SSH:-false}" = true ]; then
         "${TNCTL[@]}" enable-ssh "$(url)" "$APPLIANCE_USER" "$password"
-        say "ssh on 127.0.0.1:$sshp"
+        say "ssh on $(addr 22)"
     fi
     {
         echo "APPLIANCE_PASSWORD_NOW=$(printf %q "$password")"
+        echo "APPLIANCE_NETWORK=$APPLIANCE_NETWORK"
         echo "APPLIANCE_HTTP_PORT=$http"
         echo "APPLIANCE_SSH_PORT=$sshp"
     } > "$STATE"
@@ -238,21 +374,31 @@ start() {
         say "snapshot $baseline taken in ${snapped}s"
     fi
 
+    # TN_RUNNER_IP: where the guest reaches this machine. Under qemu's NAT
+    # that is 10.0.2.2, which qemu maps to this machine's loopback; on the
+    # bridge, what listens on the bridge's address or on every address.
+    local runner_ip=10.0.2.2
+    [ "$APPLIANCE_NETWORK" = bridge ] && runner_ip=$BR_RUNNER_IP
     cat <<EOF
 TN_PROFILE=shipped
-TN_HOST=127.0.0.1:$https
-TN_HOST_HTTP=127.0.0.1:$http
+TN_HOST=$(addr 443)
+TN_HOST_HTTP=$(addr 80)
 TN_USERNAME=$APPLIANCE_USER
 TN_PASSWORD=$password
 TN_DOMAIN=$name
 TN_BASELINE=${baseline:-none}
+TN_NETWORK=$APPLIANCE_NETWORK
+TN_RUNNER_IP=$runner_ip
 APPLIANCE_BOOT_SECONDS=$booted
 APPLIANCE_SNAPSHOT_SECONDS=$snapped
 EOF
+    if [ "$APPLIANCE_NETWORK" = bridge ]; then
+        echo "TN_APPLIANCE_IP=$BR_APPLIANCE_IP"
+    fi
     # Only when it is there to use: a suite may take TN_SSH being set to
     # mean it can ssh in.
     if [ "${APPLIANCE_SSH:-false}" = true ]; then
-        echo "TN_SSH=127.0.0.1:$sshp"
+        echo "TN_SSH=$(addr 22)"
     fi
     if [ "$nspare" -gt 0 ]; then
         echo "TN_SPARE_NICS=${spare_macs[*]}"
@@ -311,15 +457,16 @@ boot_report() {
     local key="$DIR/report_key"
     [ -f "$key" ] || ssh-keygen -q -t ed25519 -N '' -C appliance-boot-report -f "$key"
     "${TNCTL[@]}" enable-ssh "$(url)" "$APPLIANCE_USER" "$APPLIANCE_PASSWORD_NOW" --pubkey "$(cat "$key.pub")" >&2
-    local port="${APPLIANCE_SSH_PORT:-2222}"
+    local at
+    at="$(addr 22)"
     local -a ssh_
-    ssh_=(ssh -i "$key" -p "$port" -o BatchMode=yes -o ConnectTimeout=5
+    ssh_=(ssh -i "$key" -p "${at##*:}" -o BatchMode=yes -o ConnectTimeout=5
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
-          "$APPLIANCE_USER@127.0.0.1")
+          "$APPLIANCE_USER@${at%:*}")
     local i
     for i in $(seq 1 30); do
         "${ssh_[@]}" true 2>/dev/null && break
-        [ "$i" = 30 ] && die "no ssh into the appliance on 127.0.0.1:$port"
+        [ "$i" = 30 ] && die "no ssh into the appliance on $at"
         sleep 2
     done
     "${ssh_[@]}" 'bash -s' <<'REPORT'
@@ -394,6 +541,21 @@ print(f"{ms / 1000 - time.time():.1f}")')"
     echo "APPLIANCE_REVERT_SECONDS=$took"
 }
 
+# stop: quit qemu, then take down the bridge network, if there is one: the
+# tap is qemu's until it exits.
+stop() {
+    if running; then
+        local pid i
+        pid="$(cat "$DIR/qemu.pid")"
+        "${TNCTL[@]}" qmp "$QMP" quit >/dev/null || true
+        for i in $(seq 1 50); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.2
+        done
+    fi
+    bridge_down
+}
+
 case "${1:-}" in
 start)     start ;;
 call)      shift; [ $# -gt 0 ] || die "call <method> [params...]"; state
@@ -404,6 +566,6 @@ revert)    shift; revert "$@" ;;
 snapshots) running || die "no appliance running"; hmp info snapshots ;;
 console)   console "${2:-100}" ;;
 boot-report) boot_report ;;
-stop)      if running; then "${TNCTL[@]}" qmp "$QMP" quit >/dev/null || true; fi ;;
+stop)      stop ;;
 *)         die "usage: appliance.sh start | snapshot <name> | revert <name> | probe [baseline] | call <method> [params...] | boot-report | snapshots | console [lines] | stop" ;;
 esac
