@@ -30,6 +30,13 @@ description: >-
 # action sets them; truenas-appliance (appliance.sh) is on PATH for
 # snapshot, revert, probe, call and console.
 #
+# `network: bridge` puts the appliance on a bridge with the runner instead
+# of behind qemu's NAT: TN_HOST is its own address, 10.232.0.10, on port
+# 443, which the runner, its containers and a browser reach directly, and
+# the appliance reaches the runner at TN_RUNNER_IP, 10.232.0.1. For what
+# needs the appliance's real address and ports, such as a TrueNAS Connect
+# stack on the runner. The default, `user`, is unchanged.
+#
 # `ha: true` boots an HA pair instead (ha.sh): two appliances, from a pool
 # that attaches the appliance disk twice,
 #
@@ -76,6 +83,15 @@ inputs:
       apply interface changes on without cutting itself off. Their MACs,
       52:54:00:e2:e0:01 and up, are in TN_SPARE_NICS. Not for an HA pair.
     default: '0'
+  network:
+    description: >-
+      `user`: behind qemu's NAT, its ports forwarded to the runner's
+      loopback (TN_HOST 127.0.0.1:8443), and reaching the runner's loopback
+      at 10.0.2.2. `bridge`: on a bridge with the runner, at 10.232.0.10 on
+      its real ports (TN_HOST 10.232.0.10:443), reached directly from the
+      runner, its containers and a browser, and reaching what the runner
+      serves on 10.232.0.1. Needs passwordless sudo. Not for an HA pair.
+    default: user
   ssh:
     description: '`true` enables ssh for the admin, on TN_SSH.'
     default: 'false'
@@ -102,6 +118,18 @@ outputs:
   ssh:
     description: host:port of its ssh, when asked for.
     value: ${{ steps.start.outputs.ssh }}
+  network:
+    description: '`user` or `bridge`, as asked; empty for an HA pair.'
+    value: ${{ steps.start.outputs.network }}
+  runner-ip:
+    description: >-
+      Where the appliance reaches the runner: 10.0.2.2 with `user`, which
+      qemu maps to the runner's loopback, or 10.232.0.1 with `bridge`.
+      Empty for an HA pair.
+    value: ${{ steps.start.outputs.runner-ip }}
+  appliance-ip:
+    description: The appliance's own address with `bridge`, 10.232.0.10; empty otherwise.
+    value: ${{ steps.start.outputs.appliance-ip }}
   boot-seconds:
     description: From qemu starting to the API taking a login.
     value: ${{ steps.start.outputs.boot-seconds }}
@@ -122,6 +150,7 @@ runs:
         APPLIANCE_DATA_DISK_GB: ${{ inputs.data-disk-gb }}
         APPLIANCE_EXTRA_DISK_GB: ${{ inputs.extra-disk-gb }}
         APPLIANCE_SPARE_NICS: ${{ inputs.spare-nics }}
+        APPLIANCE_NETWORK: ${{ inputs.network }}
         APPLIANCE_SSH: ${{ inputs.ssh }}
         APPLIANCE_DISK_INPUT: ${{ inputs.disk }}
         EXPORT_ENV: ${{ inputs.export-env }}
@@ -138,6 +167,10 @@ runs:
         fi
         if [ "$HA" = true ] && [ "${APPLIANCE_SPARE_NICS:-0}" != 0 ]; then
           echo "::error::spare-nics is for one appliance; ha.sh wires an HA pair's NICs itself"
+          exit 1
+        fi
+        if [ "$HA" = true ] && [ "${APPLIANCE_NETWORK:-user}" != user ]; then
+          echo "::error::network is for one appliance; ha.sh puts an HA pair on bridges of its own"
           exit 1
         fi
         export APPLIANCE_DIR="$RUNNER_TEMP/truenas-appliance"
@@ -169,6 +202,9 @@ runs:
           echo "username=$(get TN_USERNAME)"
           echo "password=$(get TN_PASSWORD)"
           echo "ssh=$(get TN_SSH)"
+          echo "network=$(get TN_NETWORK)"
+          echo "runner-ip=$(get TN_RUNNER_IP)"
+          echo "appliance-ip=$(get TN_APPLIANCE_IP)"
           echo "boot-seconds=$(get APPLIANCE_BOOT_SECONDS)"
           echo "snapshot-seconds=$(get APPLIANCE_SNAPSHOT_SECONDS)"
         } >> "$GITHUB_OUTPUT"

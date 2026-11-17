@@ -564,16 +564,51 @@ jobs:
 | `data-disk-count`, `data-disk-gb` | `10`, `10` | Sparse qcow2 files |
 | `extra-disk-gb` | none | More sparse disks after the data disks, one per size in GB: `'32'`, `'12 12 15'`. Not for an HA pair |
 | `spare-nics` | `'0'` | NICs after the one the API is reached on, each alone on a qemu hub: no DHCP, no route. For applying interface changes without losing the appliance. MACs `52:54:00:e2:e0:01` and up, in `TN_SPARE_NICS`. Not for an HA pair |
+| `network` | `user` | `user`: behind qemu's NAT, its ports forwarded to the runner's loopback. `bridge`: on a bridge with the runner, on its own address and real ports; see below. Not for an HA pair |
 | `ssh` | `'false'` | `true` enables ssh for the admin, on `TN_SSH` |
 | `disk` | the attached one | Found by its serial, `virtio-truenas_appliance`, where the box keeps it; TrueNAS replaces it, so otherwise the one disk besides the root disk that holds a ZFS `boot-pool` |
 | `export-env` | `'true'` | Write `TN_*` to the job environment |
 
 Outputs: `host`, `host-http`, `username`, `password` (masked), `ssh`,
-`boot-seconds`, `snapshot-seconds`. `truenas-appliance` is put on `PATH`:
-`snapshot <name>`, `revert <name>`, `call <method> [params...]`,
-`snapshots`, `console [lines]`, `probe`, and `boot-report`: where the boot's
-time went, from systemd and middleware's own log, over ssh (it leaves ssh on
-with a key and sudo for the admin, so revert afterwards if that matters).
+`network`, `runner-ip`, `appliance-ip`, `boot-seconds`, `snapshot-seconds`.
+`truenas-appliance` is put on `PATH`: `snapshot <name>`, `revert <name>`,
+`call <method> [params...]`, `snapshots`, `console [lines]`, `probe`,
+`boot-report`: where the boot's time went, from systemd and middleware's own
+log, over ssh (it leaves ssh on with a key and sudo for the admin, so revert
+afterwards if that matters), and `stop`.
+
+| Variable | `network: user` | `network: bridge` |
+|---|---|---|
+| `TN_HOST` | `127.0.0.1:8443` | `10.232.0.10:443` |
+| `TN_HOST_HTTP` | `127.0.0.1:8080` | `10.232.0.10:80` |
+| `TN_SSH` (with `ssh: true`) | `127.0.0.1:2222` | `10.232.0.10:22` |
+| `TN_NETWORK` | `user` | `bridge` |
+| `TN_RUNNER_IP`: where the appliance reaches the runner | `10.0.2.2` | `10.232.0.1` |
+| `TN_APPLIANCE_IP` | not set | `10.232.0.10` |
+
+**`network: bridge`** is for what needs the appliance's own address and real
+ports, such as a TrueNAS Connect stack on the runner: registration publishes
+the NAS's own IPs, and a client then connects to them on 443. The runner is
+`10.232.0.1` on a bridge, `tnapp-br`; qemu's NIC is a tap on it with the
+fixed MAC `52:54:00:e2:e0:00`, and dnsmasq gives that MAC `10.232.0.10` for
+good and forwards the appliance's DNS to the runner's resolvers. iptables
+accepts the bridge's traffic through Docker's `FORWARD` policy and NATs the
+appliance out, as qemu's NAT does under `user`. The appliance is reached on
+`10.232.0.10` from the runner, from containers on Docker's networks and from
+a browser on the runner, and keeps its address across `revert`.
+
+- **Nothing is forwarded to `127.0.0.1`** with `bridge`. A consumer that
+  hard-codes it, or reaches the appliance as `host.docker.internal`
+  (webui's nginx container), keeps `user`.
+- **What the appliance reaches on the runner differs.** Under `user`,
+  `10.0.2.2` is the runner's loopback, so a port published on `127.0.0.1`
+  is reachable. On the bridge, the appliance reaches what listens on
+  `10.232.0.1` or on every address; publish a container's port there.
+- **It needs passwordless sudo**, for the bridge, the tap, iptables and
+  dnsmasq (GARM's runners have it); qemu itself still runs as the job's user.
+- **`truenas-appliance stop`** quits qemu and removes the bridge, the tap,
+  dnsmasq and the iptables rules. `start` refuses while `tnapp-br` exists.
+  An ephemeral runner needs neither; a self-hosted one re-running jobs does.
 
 `revert` restores the appliance's memory, and with it the clock it had when
 the snapshot was taken. It then sets the clock to the runner's through the
